@@ -5,7 +5,8 @@ import {
   TextLayer,
   setLayerDimensions,
   type PDFDocumentProxy,
-} from 'pdfjs-dist'
+} from 'pdfjs-dist/legacy/build/pdf.mjs'
+import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import {
   lookupAtPoint,
   normalizeTerm,
@@ -14,10 +15,8 @@ import {
 import { usePageSwipe } from '../hooks/usePageSwipe'
 import './pdf-text-layer.css'
 
-GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString()
+// Legacy worker — better Safari / mobile support
+GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
 type Props = {
   url: string
@@ -55,7 +54,12 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
     setLoading(true)
     setError(null)
 
-    loadingTask = getDocument({ url })
+    loadingTask = getDocument({
+      url,
+      // More stable on mobile (avoids wasm Instantiation errors)
+      useWasm: false,
+      useSystemFonts: true,
+    })
     loadingTask.promise
       .then((pdf) => {
         if (cancelled) {
@@ -103,20 +107,36 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
 
       const base = pdfPage.getViewport({ scale: 1 })
       const containerWidth = wrapRef.current?.clientWidth ?? 720
-      const scale = Math.min(1.6, Math.max(1, (containerWidth - 32) / base.width))
+      // Cap scale on phones — huge canvases crash iOS Safari
+      const isNarrow = containerWidth < 500
+      const maxScale = isNarrow ? 1.15 : 1.6
+      const scale = Math.min(
+        maxScale,
+        Math.max(0.85, (containerWidth - 24) / base.width),
+      )
       const viewport = pdfPage.getViewport({ scale })
 
-      const pageEl = wrapRef.current?.querySelector('.pdf-page') as HTMLElement | null
+      const pageEl = wrapRef.current?.querySelector(
+        '.pdf-page',
+      ) as HTMLElement | null
       if (pageEl) {
         pageEl.style.setProperty('--scale-factor', String(scale))
       }
 
-      const ctx = canvas.getContext('2d')
+      const ctx = canvas.getContext('2d', { alpha: false })
       if (!ctx) return
-      canvas.width = Math.floor(viewport.width)
-      canvas.height = Math.floor(viewport.height)
-      canvas.style.width = `${Math.floor(viewport.width)}px`
-      canvas.style.height = `${Math.floor(viewport.height)}px`
+
+      const w = Math.floor(viewport.width)
+      const h = Math.floor(viewport.height)
+      // iOS soft limit ~16 megapixels
+      if (w * h > 16_000_000) {
+        throw new Error('Strona PDF jest za duża na ten telefon.')
+      }
+
+      canvas.width = w
+      canvas.height = h
+      canvas.style.width = `${w}px`
+      canvas.style.height = `${h}px`
 
       textLayerDiv.innerHTML = ''
       textLayerDiv.className = 'textLayer'
@@ -138,7 +158,6 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
       })
       await textLayer.render()
 
-      // Keep page top visible after flip
       wrapRef.current?.scrollTo({ top: 0 })
     })().catch((err: unknown) => {
       if (cancelled) return
