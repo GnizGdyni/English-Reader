@@ -3,11 +3,19 @@ import { lookupAtPoint, selectionLookup } from '../lib/selection'
 
 type Props = {
   file: File
+  focusMode?: boolean
+  onExitFocus?: () => void
   onLookup: (term: string, context?: string) => void
   onNavLabel: (label: string) => void
 }
 
-export function TxtReader({ file, onLookup, onNavLabel }: Props) {
+export function TxtReader({
+  file,
+  focusMode = false,
+  onExitFocus,
+  onLookup,
+  onNavLabel,
+}: Props) {
   const articleRef = useRef<HTMLElement>(null)
   const [text, setText] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -42,7 +50,19 @@ export function TxtReader({ file, onLookup, onNavLabel }: Props) {
   }, [file, onNavLabel])
 
   return (
-    <div className="txt-reader">
+    <div className={`txt-reader${focusMode ? ' txt-reader--focus' : ''}`}>
+      {focusMode && onExitFocus && (
+        <div className="reader-nav reader-nav--sticky reader-nav--focus">
+          <button
+            type="button"
+            className="reader-nav__exit"
+            onClick={onExitFocus}
+            aria-label="Wyjdź z trybu czytania"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {loading && <p className="reader-status">Ładowanie tekstu…</p>}
       {error && <p className="error-banner">{error}</p>}
       {!loading && !error && (
@@ -66,7 +86,9 @@ export function TxtReader({ file, onLookup, onNavLabel }: Props) {
           {text}
         </article>
       )}
-      <p className="reader-hint">Zaznacz tekst lub kliknij słowo</p>
+      {!focusMode && (
+        <p className="reader-hint">Zaznacz tekst lub kliknij słowo</p>
+      )}
     </div>
   )
 }

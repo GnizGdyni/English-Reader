@@ -15,7 +15,7 @@
   "dependencies": {
     "core-js": "^3.50.0",
     "epubjs": "^0.3.93",
-    "pdfjs-dist": "^4.10.38",
+    "pdfjs-dist": "4.10.38",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

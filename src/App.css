@@ -225,7 +225,7 @@ button {
 
 .reader-bar {
   display: grid;
-  grid-template-columns: auto 1fr auto auto auto;
+  grid-template-columns: auto 1fr auto auto auto auto;
   align-items: center;
   gap: 0.75rem 0.85rem;
   padding: 0.75rem 1.25rem;
@@ -299,6 +299,97 @@ button {
   border-radius: 6px;
 }
 
+.reader-bar__focus {
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.reader-shell--focus {
+  background: var(--surface);
+}
+
+.reader-shell--focus .reader-main {
+  flex: 1;
+  min-height: 0;
+}
+
+.zoom-pane {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.zoom-pane__content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  transform-origin: center top;
+  will-change: transform;
+}
+
+.zoom-pane__reset {
+  position: fixed;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  right: max(1rem, env(safe-area-inset-right));
+  z-index: 35;
+  border: none;
+  border-radius: 999px;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+  color: var(--ink);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+.reader-shell--focus .pdf-wrap {
+  padding: 0;
+  overflow: hidden;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+
+.reader-shell--focus .pdf-page {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.reader-shell--focus .epub-host {
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+  touch-action: none;
+}
+
+.reader-shell--focus .txt-article {
+  max-width: none;
+  margin: 0;
+  min-height: 100%;
+  border-radius: 0;
+  box-shadow: none;
+  font-size: 1.3rem;
+  padding: clamp(1rem, 4vw, 2rem);
+}
+
+.reader-shell--focus .txt-reader {
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .reader-main {
   flex: 1;
   display: flex;
@@ -323,6 +414,45 @@ button {
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.reader-nav--focus {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 35;
+  gap: 0.45rem;
+  padding: 0.35rem 0.65rem;
+  padding-top: max(0.35rem, env(safe-area-inset-top));
+  min-height: 2.35rem;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+
+.reader-nav--focus button:not(.reader-nav__exit) {
+  padding: 0.25rem 0.7rem;
+  font-size: 0.82rem;
+  min-width: 2.25rem;
+}
+
+.reader-nav__exit {
+  margin-right: auto;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 999px;
+  border: none;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink-muted);
+  font-size: 0.95rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.reader-shell--focus .pdf-reader,
+.reader-shell--focus .epub-reader,
+.reader-shell--focus .txt-reader {
+  padding-top: calc(2.35rem + env(safe-area-inset-top));
 }
 
 .reader-nav button {
@@ -643,7 +773,8 @@ button {
   }
 
   .reader-bar__auto-speak,
-  .reader-bar .theme-toggle {
+  .reader-bar .theme-toggle,
+  .reader-bar__focus {
     grid-column: 1 / -1;
     justify-self: start;
   }

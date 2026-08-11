@@ -7,18 +7,25 @@ import { usePageSwipe } from '../hooks/usePageSwipe'
 type Props = {
   url: string
   theme?: 'light' | 'dark'
+  focusMode?: boolean
+  swipeEnabled?: boolean
+  onExitFocus?: () => void
   onLookup: (term: string, context?: string) => void
   onNavLabel: (label: string) => void
 }
 
-function applyEpubTheme(rendition: Rendition, theme: 'light' | 'dark') {
+function applyEpubTheme(
+  rendition: Rendition,
+  theme: 'light' | 'dark',
+  focusMode = false,
+) {
   const dark = theme === 'dark'
   rendition.themes.override('color', dark ? '#e4eaf2' : '#1a2332')
   rendition.themes.override('background', dark ? '#1a222d' : '#ffffff')
   rendition.themes.default({
     body: {
       'font-family': '"Literata", Georgia, serif !important',
-      'font-size': '1.15em !important',
+      'font-size': focusMode ? '1.35em !important' : '1.15em !important',
       'line-height': '1.7 !important',
       color: dark ? '#e4eaf2 !important' : '#1a2332 !important',
       'background-color': dark ? '#1a222d !important' : '#ffffff !important',
@@ -36,7 +43,15 @@ function emitLookup(
   onLookup(payload.term, payload.context)
 }
 
-export function EpubReader({ url, theme = 'light', onLookup, onNavLabel }: Props) {
+export function EpubReader({
+  url,
+  theme = 'light',
+  focusMode = false,
+  swipeEnabled = true,
+  onExitFocus,
+  onLookup,
+  onNavLabel,
+}: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
   const swipeRef = useRef<HTMLDivElement>(null)
   const renditionRef = useRef<Rendition | null>(null)
@@ -59,7 +74,7 @@ export function EpubReader({ url, theme = 'light', onLookup, onNavLabel }: Props
   usePageSwipe(swipeRef, {
     onPrev: goPrev,
     onNext: goNext,
-    enabled: ready,
+    enabled: ready && swipeEnabled,
   })
 
   useEffect(() => {
@@ -79,7 +94,7 @@ export function EpubReader({ url, theme = 'light', onLookup, onNavLabel }: Props
     })
     renditionRef.current = rendition
 
-    applyEpubTheme(rendition, themeRef.current)
+    applyEpubTheme(rendition, themeRef.current, false)
 
     const handleSelected = (_cfiRange: string, contents: Contents) => {
       emitLookup(onLookupRef.current, lookupInDocument(contents.document))
@@ -135,24 +150,41 @@ export function EpubReader({ url, theme = 'light', onLookup, onNavLabel }: Props
   useEffect(() => {
     const rendition = renditionRef.current
     if (!rendition || !ready) return
-    applyEpubTheme(rendition, theme)
-  }, [theme, ready])
+    applyEpubTheme(rendition, theme, focusMode)
+  }, [theme, ready, focusMode])
 
   return (
-    <div className="epub-reader" ref={swipeRef}>
-      <div className="reader-nav reader-nav--sticky">
+    <div
+      className={`epub-reader${focusMode ? ' epub-reader--focus' : ''}`}
+      ref={swipeRef}
+    >
+      <div
+        className={`reader-nav reader-nav--sticky${focusMode ? ' reader-nav--focus' : ''}`}
+      >
+        {focusMode && onExitFocus && (
+          <button
+            type="button"
+            className="reader-nav__exit"
+            onClick={onExitFocus}
+            aria-label="Wyjdź z trybu czytania"
+          >
+            ✕
+          </button>
+        )}
         <button type="button" onClick={goPrev} disabled={!ready}>
-          ← Poprzednia
+          {focusMode ? '←' : '← Poprzednia'}
         </button>
         <button type="button" onClick={goNext} disabled={!ready}>
-          Następna →
+          {focusMode ? '→' : 'Następna →'}
         </button>
       </div>
       {error && <p className="error-banner">{error}</p>}
       <div ref={hostRef} className="epub-host" />
-      <p className="reader-hint">
-        Zaznacz tekst · przeciągnij w bok, by zmienić stronę
-      </p>
+      {!focusMode && (
+        <p className="reader-hint">
+          Zaznacz tekst · przeciągnij w bok, by zmienić stronę
+        </p>
+      )}
     </div>
   )
 }

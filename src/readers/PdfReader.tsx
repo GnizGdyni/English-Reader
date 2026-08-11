@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   getDocument,
-  GlobalWorkerOptions,
   TextLayer,
   setLayerDimensions,
   type PDFDocumentProxy,
-} from 'pdfjs-dist/legacy/build/pdf.mjs'
-import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
+} from '../lib/pdfjs'
 import {
   lookupAtPoint,
   selectionLookup,
@@ -14,15 +12,23 @@ import {
 import { usePageSwipe } from '../hooks/usePageSwipe'
 import './pdf-text-layer.css'
 
-GlobalWorkerOptions.workerSrc = pdfWorkerUrl
-
 type Props = {
   url: string
+  focusMode?: boolean
+  swipeEnabled?: boolean
+  onExitFocus?: () => void
   onLookup: (term: string, context?: string) => void
   onNavLabel: (label: string) => void
 }
 
-export function PdfReader({ url, onLookup, onNavLabel }: Props) {
+export function PdfReader({
+  url,
+  focusMode = false,
+  swipeEnabled = true,
+  onExitFocus,
+  onLookup,
+  onNavLabel,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const textLayerRef = useRef<HTMLDivElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -44,7 +50,7 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
   usePageSwipe(wrapRef, {
     onPrev: goPrev,
     onNext: goNext,
-    enabled: pageCount > 0,
+    enabled: pageCount > 0 && swipeEnabled,
   })
 
   useEffect(() => {
@@ -75,9 +81,13 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
 
     return () => {
       cancelled = true
-      void pdfRef.current?.cleanup()
+      const task = loadingTask
+      const doc = pdfRef.current
       pdfRef.current = null
-      void loadingTask?.destroy()
+      loadingTask = null
+      // Destroy in order: document first, then the loading task.
+      // Both calls are async but cleanup can't be awaited in useEffect cleanup.
+      void doc?.cleanup().then(() => task?.destroy())
     }
   }, [url])
 
@@ -100,10 +110,17 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
       const base = pdfPage.getViewport({ scale: 1 })
       const containerWidth = wrapRef.current?.clientWidth ?? 720
       const isNarrow = containerWidth < 500
-      const maxScale = isNarrow ? 1.1 : 1.6
+      const maxScale = focusMode
+        ? isNarrow
+          ? 1.55
+          : 2.2
+        : isNarrow
+          ? 1.1
+          : 1.6
+      const padding = focusMode ? 8 : 24
       const scale = Math.min(
         maxScale,
-        Math.max(0.85, (containerWidth - 24) / base.width),
+        Math.max(focusMode ? 1 : 0.85, (containerWidth - padding) / base.width),
       )
       const viewport = pdfPage.getViewport({ scale })
 
@@ -155,7 +172,7 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
     return () => {
       cancelled = true
     }
-  }, [page, pageCount, loading])
+  }, [page, pageCount, loading, focusMode])
 
   const runLookup = useCallback(
     (clientX: number, clientY: number) => {
@@ -204,10 +221,22 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
   }, [goNext, goPrev])
 
   return (
-    <div className="pdf-reader">
-      <div className="reader-nav reader-nav--sticky">
+    <div className={`pdf-reader${focusMode ? ' pdf-reader--focus' : ''}`}>
+      <div
+        className={`reader-nav reader-nav--sticky${focusMode ? ' reader-nav--focus' : ''}`}
+      >
+        {focusMode && onExitFocus && (
+          <button
+            type="button"
+            className="reader-nav__exit"
+            onClick={onExitFocus}
+            aria-label="Wyjdź z trybu czytania"
+          >
+            ✕
+          </button>
+        )}
         <button type="button" disabled={page <= 1} onClick={goPrev}>
-          ← Poprzednia
+          {focusMode ? '←' : '← Poprzednia'}
         </button>
         <span className="reader-nav__page">
           {pageCount ? `${page} / ${pageCount}` : '—'}
@@ -217,7 +246,7 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
           disabled={!pageCount || page >= pageCount}
           onClick={goNext}
         >
-          Następna →
+          {focusMode ? '→' : 'Następna →'}
         </button>
       </div>
 
@@ -235,9 +264,11 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
           />
         </div>
       </div>
-      <p className="reader-hint">
-        Dotknij słowo · przeciągnij w bok, by zmienić stronę
-      </p>
+      {!focusMode && (
+        <p className="reader-hint">
+          Dotknij słowo · przeciągnij w bok, by zmienić stronę
+        </p>
+      )}
     </div>
   )
 }
