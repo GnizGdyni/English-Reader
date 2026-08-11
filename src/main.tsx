@@ -1,28 +1,8 @@
-import 'core-js/actual/promise/with-resolvers'
+import './lib/polyfills.ts'
 import { Component, type ErrorInfo, type ReactNode, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
-
-// Extra safety for older Safari / in-app browsers
-const PromiseCtor = Promise as unknown as {
-  withResolvers?: <T>() => {
-    promise: Promise<T>
-    resolve: (value: T | PromiseLike<T>) => void
-    reject: (reason?: unknown) => void
-  }
-}
-if (typeof PromiseCtor.withResolvers !== 'function') {
-  PromiseCtor.withResolvers = function withResolvers<T>() {
-    let resolve!: (value: T | PromiseLike<T>) => void
-    let reject!: (reason?: unknown) => void
-    const promise = new Promise<T>((res, rej) => {
-      resolve = res
-      reject = rej
-    })
-    return { promise, resolve, reject }
-  }
-}
 
 class ErrorBoundary extends Component<
   { children: ReactNode },

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   getDocument,
   GlobalWorkerOptions,
@@ -9,13 +9,11 @@ import {
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import {
   lookupAtPoint,
-  normalizeTerm,
   selectionLookup,
 } from '../lib/selection'
 import { usePageSwipe } from '../hooks/usePageSwipe'
 import './pdf-text-layer.css'
 
-// Legacy worker — better Safari / mobile support
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
 type Props = {
@@ -29,6 +27,7 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
   const textLayerRef = useRef<HTMLDivElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const pdfRef = useRef<PDFDocumentProxy | null>(null)
+  const pointerStart = useRef({ x: 0, y: 0 })
   const [page, setPage] = useState(1)
   const [pageCount, setPageCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -54,12 +53,7 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
     setLoading(true)
     setError(null)
 
-    loadingTask = getDocument({
-      url,
-      // More stable on mobile (avoids wasm Instantiation errors)
-      useWasm: false,
-      useSystemFonts: true,
-    })
+    loadingTask = getDocument({ url, useSystemFonts: true })
     loadingTask.promise
       .then((pdf) => {
         if (cancelled) {
@@ -73,11 +67,9 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
       })
       .catch((err: unknown) => {
         if (cancelled) return
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Nie udało się wczytać pliku PDF.',
-        )
+        const msg =
+          err instanceof Error ? err.message : 'Nie udało się wczytać pliku PDF.'
+        setError(msg)
         setLoading(false)
       })
 
@@ -107,9 +99,8 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
 
       const base = pdfPage.getViewport({ scale: 1 })
       const containerWidth = wrapRef.current?.clientWidth ?? 720
-      // Cap scale on phones — huge canvases crash iOS Safari
       const isNarrow = containerWidth < 500
-      const maxScale = isNarrow ? 1.15 : 1.6
+      const maxScale = isNarrow ? 1.1 : 1.6
       const scale = Math.min(
         maxScale,
         Math.max(0.85, (containerWidth - 24) / base.width),
@@ -128,7 +119,6 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
 
       const w = Math.floor(viewport.width)
       const h = Math.floor(viewport.height)
-      // iOS soft limit ~16 megapixels
       if (w * h > 16_000_000) {
         throw new Error('Strona PDF jest za duża na ten telefon.')
       }
@@ -142,11 +132,7 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
       textLayerDiv.className = 'textLayer'
       setLayerDimensions(textLayerDiv, viewport)
 
-      await pdfPage.render({
-        canvasContext: ctx,
-        viewport,
-        canvas,
-      }).promise
+      await pdfPage.render({ canvasContext: ctx, viewport }).promise
 
       if (cancelled) return
 
@@ -171,30 +157,41 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
     }
   }, [page, pageCount, loading])
 
-  const onMouseUp = useCallback(() => {
-    const layer = textLayerRef.current
-    layer?.classList.remove('selecting')
-    window.setTimeout(() => {
-      const selected = selectionLookup(layer ?? undefined)
-      if (selected) onLookup(selected.term, selected.context)
-    }, 0)
-  }, [onLookup])
-
-  const onMouseDown = useCallback(() => {
-    textLayerRef.current?.classList.add('selecting')
-  }, [])
-
-  const onClick = useCallback(
-    (e: MouseEvent) => {
+  const runLookup = useCallback(
+    (clientX: number, clientY: number) => {
       const layer = textLayerRef.current
       if (!layer) return
-      const sel = window.getSelection()?.toString()
-      if (sel && normalizeTerm(sel)) return
 
-      const hit = lookupAtPoint(layer, e.clientX, e.clientY)
+      const selected = selectionLookup(layer)
+      if (selected) {
+        onLookup(selected.term, selected.context)
+        return
+      }
+
+      const hit = lookupAtPoint(layer, clientX, clientY)
       if (hit) onLookup(hit.term, hit.context)
     },
     [onLookup],
+  )
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    pointerStart.current = { x: e.clientX, y: e.clientY }
+    textLayerRef.current?.classList.add('selecting')
+  }, [])
+
+  const onPointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      textLayerRef.current?.classList.remove('selecting')
+
+      const dx = Math.abs(e.clientX - pointerStart.current.x)
+      const dy = Math.abs(e.clientY - pointerStart.current.y)
+      if (dx > 24 || dy > 24) return
+
+      window.setTimeout(() => {
+        runLookup(e.clientX, e.clientY)
+      }, 50)
+    },
+    [runLookup],
   )
 
   useEffect(() => {
@@ -233,14 +230,13 @@ export function PdfReader({ url, onLookup, onNavLabel }: Props) {
           <div
             ref={textLayerRef}
             className="textLayer"
-            onMouseDown={onMouseDown}
-            onMouseUp={onMouseUp}
-            onClick={onClick}
+            onPointerDown={onPointerDown}
+            onPointerUp={onPointerUp}
           />
         </div>
       </div>
       <p className="reader-hint">
-        Zaznacz tekst · przeciągnij w bok, by zmienić stronę
+        Dotknij słowo · przeciągnij w bok, by zmienić stronę
       </p>
     </div>
   )

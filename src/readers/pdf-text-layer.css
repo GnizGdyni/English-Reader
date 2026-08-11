@@ -26,6 +26,9 @@
   transform-origin: 0 0;
   caret-color: CanvasText;
   z-index: 2;
+  touch-action: manipulation;
+  -webkit-user-select: text;
+  user-select: text;
   --min-font-size: 1;
   --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
   --min-font-size-inv: calc(1 / var(--min-font-size));
