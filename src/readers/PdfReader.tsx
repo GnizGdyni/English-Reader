@@ -12,6 +12,13 @@ import {
 import { usePageSwipe } from '../hooks/usePageSwipe'
 import './pdf-text-layer.css'
 
+function isRenderCancelled(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === 'RenderingCancelledException' || err.name === 'AbortException')
+  )
+}
+
 type Props = {
   url: string
   focusMode?: boolean
@@ -34,10 +41,13 @@ export function PdfReader({
   const wrapRef = useRef<HTMLDivElement>(null)
   const pdfRef = useRef<PDFDocumentProxy | null>(null)
   const pointerStart = useRef({ x: 0, y: 0 })
+  const activeRenderRef = useRef<{ cancel: () => void } | null>(null)
+  const activeTextLayerRef = useRef<{ cancel: () => void } | null>(null)
   const [page, setPage] = useState(1)
   const [pageCount, setPageCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [layoutKey, setLayoutKey] = useState(0)
 
   const goPrev = useCallback(() => {
     setPage((p) => Math.max(1, p - 1))
@@ -46,6 +56,13 @@ export function PdfReader({
   const goNext = useCallback(() => {
     setPage((p) => Math.min(pageCount || p, p + 1))
   }, [pageCount])
+
+  const cancelPageRender = useCallback(() => {
+    activeTextLayerRef.current?.cancel()
+    activeTextLayerRef.current = null
+    activeRenderRef.current?.cancel()
+    activeRenderRef.current = null
+  }, [])
 
   usePageSwipe(wrapRef, {
     onPrev: goPrev,
@@ -81,6 +98,7 @@ export function PdfReader({
 
     return () => {
       cancelled = true
+      cancelPageRender()
       const task = loadingTask
       const doc = pdfRef.current
       pdfRef.current = null
@@ -89,11 +107,26 @@ export function PdfReader({
       // Both calls are async but cleanup can't be awaited in useEffect cleanup.
       void doc?.cleanup().then(() => task?.destroy())
     }
-  }, [url])
+  }, [url, cancelPageRender])
 
   useEffect(() => {
     onNavLabel(pageCount ? `Strona ${page} / ${pageCount}` : '')
   }, [page, pageCount, onNavLabel])
+
+  useEffect(() => {
+    const wrap = wrapRef.current
+    if (!wrap) return
+    let timer: ReturnType<typeof setTimeout>
+    const ro = new ResizeObserver(() => {
+      clearTimeout(timer)
+      timer = setTimeout(() => setLayoutKey((k) => k + 1), 150)
+    })
+    ro.observe(wrap)
+    return () => {
+      clearTimeout(timer)
+      ro.disconnect()
+    }
+  }, [])
 
   useEffect(() => {
     const pdf = pdfRef.current
@@ -102,26 +135,38 @@ export function PdfReader({
     if (!pdf || !canvas || !textLayerDiv || page < 1) return
 
     let cancelled = false
+    cancelPageRender()
 
     ;(async () => {
+      if (focusMode) {
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        })
+      }
+      if (cancelled) return
+
       const pdfPage = await pdf.getPage(page)
       if (cancelled) return
 
       const base = pdfPage.getViewport({ scale: 1 })
-      const containerWidth = wrapRef.current?.clientWidth ?? 720
+      const wrap = wrapRef.current
+      const containerWidth = wrap?.clientWidth ?? 720
+      const containerHeight = wrap?.clientHeight ?? 900
       const isNarrow = containerWidth < 500
-      const maxScale = focusMode
-        ? isNarrow
-          ? 1.55
-          : 2.2
-        : isNarrow
-          ? 1.1
-          : 1.6
-      const padding = focusMode ? 8 : 24
-      const scale = Math.min(
-        maxScale,
-        Math.max(focusMode ? 1 : 0.85, (containerWidth - padding) / base.width),
-      )
+      const padding = focusMode ? 4 : 24
+
+      let scale: number
+      if (focusMode) {
+        const scaleByWidth = (containerWidth - padding * 2) / base.width
+        const scaleByHeight = (containerHeight - padding * 2) / base.height
+        scale = Math.min(scaleByWidth, scaleByHeight)
+      } else {
+        const maxScale = isNarrow ? 1.1 : 1.6
+        scale = Math.min(
+          maxScale,
+          Math.max(0.85, (containerWidth - padding) / base.width),
+        )
+      }
       const viewport = pdfPage.getViewport({ scale })
 
       const pageEl = wrapRef.current?.querySelector(
@@ -149,21 +194,38 @@ export function PdfReader({
       textLayerDiv.className = 'textLayer'
       setLayerDimensions(textLayerDiv, viewport)
 
-      await pdfPage.render({ canvasContext: ctx, viewport }).promise
-
+      const renderTask = pdfPage.render({ canvasContext: ctx, viewport })
+      activeRenderRef.current = renderTask
+      try {
+        await renderTask.promise
+      } catch (err) {
+        if (cancelled || isRenderCancelled(err)) return
+        throw err
+      }
       if (cancelled) return
+      activeRenderRef.current = null
 
       const textContent = await pdfPage.getTextContent()
+      if (cancelled) return
+
       const textLayer = new TextLayer({
         textContentSource: textContent,
         container: textLayerDiv,
         viewport,
       })
-      await textLayer.render()
+      activeTextLayerRef.current = textLayer
+      try {
+        await textLayer.render()
+      } catch (err) {
+        if (cancelled || isRenderCancelled(err)) return
+        throw err
+      }
+      if (cancelled) return
+      activeTextLayerRef.current = null
 
       wrapRef.current?.scrollTo({ top: 0 })
     })().catch((err: unknown) => {
-      if (cancelled) return
+      if (cancelled || isRenderCancelled(err)) return
       setError(
         err instanceof Error ? err.message : 'Błąd renderowania strony PDF.',
       )
@@ -171,8 +233,9 @@ export function PdfReader({
 
     return () => {
       cancelled = true
+      cancelPageRender()
     }
-  }, [page, pageCount, loading, focusMode])
+  }, [page, pageCount, loading, focusMode, layoutKey, cancelPageRender])
 
   const runLookup = useCallback(
     (clientX: number, clientY: number) => {

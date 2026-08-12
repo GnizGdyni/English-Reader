@@ -32,6 +32,7 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
   const [focusMode, setFocusMode] = useState(loadFocusMode)
   const [zoomScale, setZoomScale] = useState(1)
   const requestId = useRef(0)
+  const lastLookupRef = useRef({ key: '', at: 0 })
   const autoSpeakRef = useRef(autoSpeak)
   autoSpeakRef.current = autoSpeak
 
@@ -39,8 +40,22 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
 
   const lookup = useCallback(async (term: string, context?: string) => {
     if (!term || term.length > 120) return
+
+    const key = term.toLowerCase()
+    const now = Date.now()
+    if (
+      key === lastLookupRef.current.key &&
+      now - lastLookupRef.current.at < 600
+    ) {
+      return
+    }
+    lastLookupRef.current = { key, at: now }
+
     const id = ++requestId.current
-    setTranslation({ status: 'loading', term })
+    setTranslation((prev) => {
+      if (prev.status === 'loading' && prev.term === term) return prev
+      return { status: 'loading', term }
+    })
 
     if (autoSpeakRef.current) {
       speakEnglish(term)

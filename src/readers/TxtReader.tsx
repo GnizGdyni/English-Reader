@@ -69,16 +69,19 @@ export function TxtReader({
         <article
           ref={articleRef}
           className="txt-article"
-          onMouseUp={() => {
-            const el = articleRef.current
-            const selected = selectionLookup(el ?? undefined)
-            if (selected) onLookup(selected.term, selected.context)
-          }}
           onClick={(e) => {
             const el = articleRef.current
             if (!el) return
+
+            const selected = selectionLookup(el)
+            if (selected) {
+              onLookup(selected.term, selected.context)
+              return
+            }
+
             const sel = window.getSelection()
             if (sel && !sel.isCollapsed && sel.toString().trim()) return
+
             const hit = lookupAtPoint(el, e.clientX, e.clientY)
             if (hit) onLookup(hit.term, hit.context)
           }}

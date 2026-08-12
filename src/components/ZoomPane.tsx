@@ -124,23 +124,27 @@ export function ZoomPane({ enabled, onScaleChange, children }: Props) {
     }
   }, [enabled, apply])
 
-  if (!enabled) {
-    return <>{children}</>
-  }
-
   const resetZoom = () => apply({ scale: 1, x: 0, y: 0 })
 
+  // Keep the same wrapper DOM so reader components don't remount on toggle.
   return (
-    <div className="zoom-pane" ref={viewportRef}>
+    <div
+      className={`zoom-pane${enabled ? '' : ' zoom-pane--disabled'}`}
+      ref={viewportRef}
+    >
       <div
         className="zoom-pane__content"
-        style={{
-          transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-        }}
+        style={
+          enabled
+            ? {
+                transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+              }
+            : undefined
+        }
       >
         {children}
       </div>
-      {transform.scale > 1.05 && (
+      {enabled && transform.scale > 1.05 && (
         <button
           type="button"
           className="zoom-pane__reset"
