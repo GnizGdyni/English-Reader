@@ -7,11 +7,18 @@ import {
   stopSpeaking,
 } from '../lib/speech'
 import { loadFocusMode, saveFocusMode } from '../lib/focusMode'
+import {
+  addStudyCard,
+  hasStudyCard,
+  loadStudyDeck,
+  saveStudyDeck,
+} from '../lib/studyDeck'
 import type { Theme } from '../lib/theme'
-import type { LoadedBook, TranslationState } from '../types'
+import type { LoadedBook, StudyCard, TranslationResult, TranslationState } from '../types'
 import { TranslationPanel } from './TranslationPanel'
 import { ThemeToggle } from './ThemeToggle'
 import { ZoomPane } from './ZoomPane'
+import { Flashcards } from './Flashcards'
 import { EpubReader } from '../readers/EpubReader'
 import { PdfReader } from '../readers/PdfReader'
 import { TxtReader } from '../readers/TxtReader'
@@ -31,12 +38,33 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
   const [autoSpeak, setAutoSpeak] = useState(loadAutoSpeak)
   const [focusMode, setFocusMode] = useState(loadFocusMode)
   const [zoomScale, setZoomScale] = useState(1)
+  const [studyDeck, setStudyDeck] = useState<StudyCard[]>(loadStudyDeck)
+  const [studyOpen, setStudyOpen] = useState(false)
   const requestId = useRef(0)
   const lastLookupRef = useRef({ key: '', at: 0 })
   const autoSpeakRef = useRef(autoSpeak)
   autoSpeakRef.current = autoSpeak
 
   const swipeEnabled = !focusMode || zoomScale <= 1.02
+
+  const updateStudyDeck = useCallback((cards: StudyCard[]) => {
+    setStudyDeck(cards)
+    saveStudyDeck(cards)
+  }, [])
+
+  const addToStudy = useCallback(
+    (result: TranslationResult) => {
+      updateStudyDeck(
+        addStudyCard(studyDeck, {
+          term: result.term,
+          translation: result.translation,
+          context: result.context,
+          explanation: result.explanation,
+        }),
+      )
+    },
+    [studyDeck, updateStudyDeck],
+  )
 
   const lookup = useCallback(async (term: string, context?: string) => {
     if (!term || term.length > 120) return
@@ -99,9 +127,18 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
     })
   }, [clearTranslation])
 
+  const openStudy = useCallback(() => {
+    clearTranslation()
+    setStudyOpen(true)
+  }, [clearTranslation])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (studyOpen) {
+          setStudyOpen(false)
+          return
+        }
         if (focusMode) {
           setFocusMode(false)
           saveFocusMode(false)
@@ -116,7 +153,21 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
       window.removeEventListener('keydown', onKey)
       stopSpeaking()
     }
-  }, [clearTranslation, focusMode])
+  }, [clearTranslation, focusMode, studyOpen])
+
+  const currentSaved =
+    translation.status === 'ready' &&
+    hasStudyCard(studyDeck, translation.result.term)
+
+  if (studyOpen) {
+    return (
+      <Flashcards
+        cards={studyDeck}
+        onChange={updateStudyDeck}
+        onClose={() => setStudyOpen(false)}
+      />
+    )
+  }
 
   return (
     <div
@@ -143,6 +194,17 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
           </label>
           <button
             type="button"
+            className="reader-bar__study"
+            onClick={openStudy}
+            title="Ćwicz zapisane słówka"
+          >
+            Ćwicz
+            {studyDeck.length > 0 && (
+              <span className="reader-bar__study-count">{studyDeck.length}</span>
+            )}
+          </button>
+          <button
+            type="button"
             className="reader-bar__focus"
             onClick={toggleFocusMode}
             title="Tryb czytania — pełny ekran"
@@ -153,7 +215,6 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
           <span className="reader-bar__format">{book.format.toUpperCase()}</span>
         </header>
       )}
-
 
       <ZoomPane enabled={focusMode} onScaleChange={setZoomScale}>
         <div className="reader-main">
@@ -190,7 +251,12 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
         </div>
       </ZoomPane>
 
-      <TranslationPanel state={translation} onClose={clearTranslation} />
+      <TranslationPanel
+        state={translation}
+        onClose={clearTranslation}
+        isSaved={currentSaved}
+        onAddToStudy={addToStudy}
+      />
     </div>
   )
 }

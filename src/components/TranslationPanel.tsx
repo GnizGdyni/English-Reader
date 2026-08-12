@@ -1,14 +1,22 @@
 import { useEffect, useState } from 'react'
-import type { TranslationState } from '../types'
+import type { TranslationResult, TranslationState } from '../types'
 import { speakEnglish } from '../lib/speech'
 
 type Props = {
   state: TranslationState
   onClose: () => void
+  isSaved?: boolean
+  onAddToStudy?: (result: TranslationResult) => void
 }
 
-export function TranslationPanel({ state, onClose }: Props) {
+export function TranslationPanel({
+  state,
+  onClose,
+  isSaved = false,
+  onAddToStudy,
+}: Props) {
   const [contextOpen, setContextOpen] = useState(false)
+  const [justAdded, setJustAdded] = useState(false)
 
   const termKey =
     state.status === 'ready'
@@ -17,14 +25,15 @@ export function TranslationPanel({ state, onClose }: Props) {
         ? state.term
         : ''
 
-  // Collapse context again when looking up a new word
   useEffect(() => {
     setContextOpen(false)
+    setJustAdded(false)
   }, [termKey])
 
   if (state.status === 'idle') return null
 
   const englishTerm = termKey
+  const saved = isSaved || justAdded
 
   return (
     <aside className="translation-panel" aria-live="polite">
@@ -67,6 +76,21 @@ export function TranslationPanel({ state, onClose }: Props) {
                 <span aria-hidden="true">▶</span> Wymowa
               </button>
             </div>
+
+            {onAddToStudy && (
+              <button
+                type="button"
+                className={`translation-panel__study${saved ? ' translation-panel__study--saved' : ''}`}
+                disabled={saved}
+                onClick={() => {
+                  onAddToStudy(state.result)
+                  setJustAdded(true)
+                }}
+              >
+                {saved ? '✓ W nauce' : '+ Do nauki'}
+              </button>
+            )}
+
             {(state.result.context || state.result.contextTranslation) && (
               <div className="translation-panel__context">
                 <button

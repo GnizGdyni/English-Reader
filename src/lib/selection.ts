@@ -64,8 +64,53 @@ function collectTextNodes(root: Node): Text[] {
   return out
 }
 
+function textHost(node: Text): HTMLElement | null {
+  const el = node.parentElement
+  return el
+}
+
+/**
+ * PDF text layers put each run in an absolutely positioned <span> without
+ * spaces at line wraps. Insert a space when geometry says it's a wrap/gap —
+ * but not for mid-word splits or hyphenated breaks ("some-" + "thing").
+ */
+function shouldInsertSpace(prev: Text, next: Text): boolean {
+  const a = prev.textContent ?? ''
+  const b = next.textContent ?? ''
+  if (!a || !b) return false
+  if (/\s$/.test(a) || /^\s/.test(b)) return false
+  // Hyphenation across lines: keep glued
+  if (/[-­\u2010\u2011]$/.test(a) && /^\p{L}/u.test(b)) return false
+
+  const prevEl = textHost(prev)
+  const nextEl = textHost(next)
+  if (!prevEl || !nextEl) {
+    // Non-positioned text (TXT/EPUB): only soft heuristic for missing space
+    return isWordChar(a[a.length - 1]!) && isWordChar(b[0]!)
+  }
+
+  const pr = prevEl.getBoundingClientRect()
+  const nr = nextEl.getBoundingClientRect()
+  if (pr.width === 0 && pr.height === 0) {
+    return isWordChar(a[a.length - 1]!) && isWordChar(b[0]!)
+  }
+
+  const lineThreshold = Math.max(2, Math.min(pr.height, nr.height) * 0.45)
+  // New line / wrap
+  if (nr.top > pr.top + lineThreshold) return true
+
+  // Same line with a visible gap between runs
+  const gap = nr.left - pr.right
+  const em = Math.max(pr.height, nr.height, 10)
+  if (gap > em * 0.12) return true
+
+  // Tightly adjacent / overlapping → same word split across spans
+  return false
+}
+
 /**
  * Build a continuous string from text nodes and map a node+offset to an index.
+ * Inserts missing spaces at PDF line wraps / gaps.
  */
 function buildTextIndex(root: Node): {
   text: string
@@ -75,7 +120,11 @@ function buildTextIndex(root: Node): {
   let text = ''
   const starts: Array<{ node: Text; start: number }> = []
 
-  for (const node of nodes) {
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i]!
+    if (i > 0 && shouldInsertSpace(nodes[i - 1]!, node)) {
+      text += ' '
+    }
     starts.push({ node, start: text.length })
     text += node.textContent ?? ''
   }
@@ -254,8 +303,9 @@ export function selectionLookup(
     const start = indexOf(range.startContainer, range.startOffset)
     const end = indexOf(range.endContainer, range.endOffset)
     if (start != null && end != null && end > start) {
+      const fromIndex = normalizeTerm(text.slice(start, end))
       return {
-        term,
+        term: fromIndex || term,
         context: sentenceAround(text, start, end),
       }
     }

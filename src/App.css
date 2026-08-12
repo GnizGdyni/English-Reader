@@ -225,7 +225,7 @@ button {
 
 .reader-bar {
   display: grid;
-  grid-template-columns: auto 1fr auto auto auto auto;
+  grid-template-columns: auto 1fr auto auto auto auto auto;
   align-items: center;
   gap: 0.75rem 0.85rem;
   padding: 0.75rem 1.25rem;
@@ -308,6 +308,32 @@ button {
   font-size: 0.78rem;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.reader-bar__study {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+  background: var(--btn-bg);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.reader-bar__study-count {
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.7rem;
+  line-height: 1.15rem;
+  text-align: center;
 }
 
 .reader-shell--focus {
@@ -662,6 +688,32 @@ button {
   transform: scale(0.97);
 }
 
+.translation-panel__study {
+  display: inline-flex;
+  align-items: center;
+  margin: 0.65rem 0 0.15rem;
+  border: 1px solid rgb(255 255 255 / 28%);
+  background: rgb(255 255 255 / 12%);
+  color: #e8f4f4;
+  border-radius: 999px;
+  padding: 0.4rem 0.95rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.translation-panel__study:hover:not(:disabled) {
+  background: rgb(255 255 255 / 20%);
+}
+
+.translation-panel__study--saved,
+.translation-panel__study:disabled {
+  opacity: 0.75;
+  cursor: default;
+  border-color: rgb(120 220 180 / 35%);
+  background: rgb(80 180 140 / 22%);
+  color: #c8f0dc;
+}
+
 .translation-panel__expl {
   margin: 0.65rem 0 0;
   font-size: 0.9rem;
@@ -783,8 +835,232 @@ button {
 
   .reader-bar__auto-speak,
   .reader-bar .theme-toggle,
-  .reader-bar__focus {
+  .reader-bar__focus,
+  .reader-bar__study {
     grid-column: 1 / -1;
     justify-self: start;
   }
+}
+
+/* ——— Flashcards ——— */
+
+.flashcards {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-height: 100dvh;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.flashcards__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  padding-top: max(0.75rem, env(safe-area-inset-top));
+  background: var(--bar);
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+  flex-shrink: 0;
+}
+
+.flashcards__back,
+.flashcards__clear {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 500;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.9rem;
+}
+
+.flashcards__clear:disabled {
+  opacity: 0.4;
+}
+
+.flashcards__progress {
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+
+.flashcards__empty,
+.flashcards__done {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 2rem 1.5rem;
+  text-align: center;
+}
+
+.flashcards__empty p,
+.flashcards__done p {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+.flashcards__hint {
+  font-size: 0.9rem;
+}
+
+.flashcards__done h2 {
+  margin: 0 0 0.25rem;
+  font-family: "Literata", Georgia, serif;
+  font-size: 1.6rem;
+}
+
+.flashcards__done-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+  justify-content: center;
+}
+
+.flashcards__done-actions button,
+.flashcards__empty button {
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 999px;
+  padding: 0.55rem 1.2rem;
+  font-weight: 600;
+}
+
+.flashcards__secondary {
+  background: var(--btn-bg) !important;
+  color: var(--ink) !important;
+  border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent) !important;
+}
+
+.flashcards__stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 1rem 1.25rem 1.5rem;
+  min-height: 0;
+}
+
+.flashcard {
+  position: relative;
+  width: min(100%, 420px);
+  min-height: 260px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  perspective: 1000px;
+  cursor: pointer;
+}
+
+.flashcard__face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  padding: 1.5rem 1.25rem;
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transition: transform 0.45s ease;
+  text-align: center;
+}
+
+.flashcard__face--front {
+  transform: rotateY(0deg);
+}
+
+.flashcard__face--back {
+  transform: rotateY(180deg);
+}
+
+.flashcard--flipped .flashcard__face--front {
+  transform: rotateY(180deg);
+}
+
+.flashcard--flipped .flashcard__face--back {
+  transform: rotateY(360deg);
+}
+
+.flashcard__label {
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.flashcard__term {
+  font-family: "Literata", Georgia, serif;
+  font-size: clamp(1.5rem, 5vw, 2rem);
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+.flashcard__context,
+.flashcard__expl {
+  font-size: 0.88rem;
+  color: var(--ink-muted);
+  line-height: 1.45;
+  max-width: 32ch;
+}
+
+.flashcard__tap {
+  position: absolute;
+  bottom: 0.85rem;
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+  opacity: 0.7;
+}
+
+.flashcards__actions {
+  display: flex;
+  gap: 0.65rem;
+}
+
+.flashcards__speak,
+.flashcards__remove {
+  border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+  background: var(--btn-bg);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.8rem;
+}
+
+.flashcards__grade {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+.flashcards__again,
+.flashcards__known {
+  border: none;
+  border-radius: 999px;
+  padding: 0.65rem 1.35rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  min-width: 8rem;
+}
+
+.flashcards__again {
+  background: color-mix(in srgb, var(--danger, #c44) 18%, var(--btn-bg));
+  color: var(--danger, #c44);
+}
+
+.flashcards__known {
+  background: var(--accent);
+  color: #fff;
 }

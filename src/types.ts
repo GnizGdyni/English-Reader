@@ -23,3 +23,13 @@ export type TranslationState =
   | { status: 'loading'; term: string }
   | { status: 'ready'; result: TranslationResult }
   | { status: 'error'; term: string; message: string }
+
+/** Word saved for flashcard practice (persisted in localStorage). */
+export type StudyCard = {
+  id: string
+  term: string
+  translation: string
+  context?: string
+  explanation?: string
+  addedAt: number
+}
