@@ -45,10 +45,6 @@ const STOP = new Set([
   'just', 'also', 'there', 'here', 'up', 'out', 'over', 'after', 'before',
 ])
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 function loadPersistentCache() {
   try {
     const raw = localStorage.getItem(CACHE_KEY)
@@ -73,62 +69,69 @@ function savePersistentCache() {
 
 loadPersistentCache()
 
-async function fetchMyMemory(text: string, retries = 2): Promise<string | null> {
+async function fetchMyMemory(text: string): Promise<string | null> {
   const q = text.trim()
   if (!q) return null
   const clipped = q.length > 450 ? `${q.slice(0, 450)}…` : q
   const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(clipped)}&langpair=en|pl`
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const res = await fetch(url)
-      if (!res.ok) {
-        if (attempt < retries) {
-          await sleep(400 * (attempt + 1))
-          continue
-        }
-        return null
-      }
-      const data = (await res.json()) as {
-        responseData?: { translatedText?: string }
-        responseStatus?: number
-      }
-      const translated = data.responseData?.translatedText?.trim()
-      if (!translated) {
-        if (attempt < retries) {
-          await sleep(400 * (attempt + 1))
-          continue
-        }
-        return null
-      }
-      if (/MYMEMORY WARNING|QUOTA/i.test(translated)) {
-        if (attempt < retries) {
-          await sleep(500 * (attempt + 1))
-          continue
-        }
-        return null
-      }
-      if (
-        data.responseStatus &&
-        data.responseStatus !== 200 &&
-        translated.toLowerCase() === q.toLowerCase()
-      ) {
-        if (attempt < retries) {
-          await sleep(400 * (attempt + 1))
-          continue
-        }
-        return null
-      }
-      return translated.replace(/\s+/g, ' ').trim()
-    } catch {
-      if (attempt < retries) {
-        await sleep(400 * (attempt + 1))
-        continue
-      }
+  try {
+    const res = await fetch(url)
+    if (res.status === 429) return null
+    if (!res.ok) return null
+    const data = (await res.json()) as {
+      responseData?: { translatedText?: string }
+      responseStatus?: number
+    }
+    const translated = data.responseData?.translatedText?.trim()
+    if (!translated) return null
+    if (/MYMEMORY WARNING|QUOTA|AVAILABLE FREE/i.test(translated)) return null
+    if (data.responseStatus === 429) return null
+    if (
+      data.responseStatus &&
+      data.responseStatus !== 200 &&
+      translated.toLowerCase() === q.toLowerCase()
+    ) {
       return null
     }
+    return translated.replace(/\s+/g, ' ').trim()
+  } catch {
+    return null
   }
-  return null
+}
+
+/** Unofficial Google Translate endpoint — fallback when MyMemory quota is exhausted. */
+async function fetchGoogleGtx(text: string): Promise<string | null> {
+  const q = text.trim()
+  if (!q) return null
+  const clipped = q.length > 450 ? q.slice(0, 450) : q
+  const url =
+    `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=pl&dt=t&q=` +
+    encodeURIComponent(clipped)
+
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const data = (await res.json()) as unknown
+    // Response shape: [[["pl text","en text",...],...], ...]
+    if (!Array.isArray(data) || !Array.isArray(data[0])) return null
+    const parts: string[] = []
+    for (const chunk of data[0] as unknown[]) {
+      if (Array.isArray(chunk) && typeof chunk[0] === 'string') {
+        parts.push(chunk[0])
+      }
+    }
+    const joined = parts.join('').replace(/\s+/g, ' ').trim()
+    return joined || null
+  } catch {
+    return null
+  }
+}
+
+async function fetchTranslation(text: string): Promise<string | null> {
+  const primary = await fetchMyMemory(text)
+  if (primary) return primary
+  return fetchGoogleGtx(text)
 }
 
 function tokenize(text: string): string[] {
@@ -492,12 +495,12 @@ async function resolveBestGloss(
     .slice(0, 120)
 
   const [hintPl, barePl, phrasePl, defPl] = await Promise.all([
-    hintQuery !== term ? fetchMyMemory(hintQuery) : Promise.resolve(null),
-    fetchMyMemory(term),
+    hintQuery !== term ? fetchTranslation(hintQuery) : Promise.resolve(null),
+    fetchTranslation(term),
     phrase && phrase.toLowerCase() !== term.toLowerCase()
-      ? fetchMyMemory(phrase)
+      ? fetchTranslation(phrase)
       : Promise.resolve(null),
-    defSnippet ? fetchMyMemory(defSnippet) : Promise.resolve(null),
+    defSnippet ? fetchTranslation(defSnippet) : Promise.resolve(null),
   ])
 
   const referenceGloss = cleanGloss(
@@ -585,7 +588,7 @@ async function fetchSimilarEn(
 async function translateWordList(words: string[]): Promise<string[]> {
   if (!words.length) return []
   const joined = words.join(', ')
-  const pl = await fetchMyMemory(joined)
+  const pl = await fetchTranslation(joined)
   if (!pl) return words
 
   const parts = pl.split(/[,;]/).map((p) => p.trim()).filter(Boolean)
@@ -630,7 +633,7 @@ async function translateInternal(
 ): Promise<TranslationResult> {
   const [senses, sentencePl] = await Promise.all([
     fetchDictionarySenses(term),
-    hasSentence && sentence ? fetchMyMemory(sentence) : Promise.resolve(null),
+    hasSentence && sentence ? fetchTranslation(sentence) : Promise.resolve(null),
   ])
 
   const best = pickBestSense(senses, term, sentence)
