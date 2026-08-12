@@ -159,16 +159,6 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
     translation.status === 'ready' &&
     hasStudyCard(studyDeck, translation.result.term)
 
-  if (studyOpen) {
-    return (
-      <Flashcards
-        cards={studyDeck}
-        onChange={updateStudyDeck}
-        onClose={() => setStudyOpen(false)}
-      />
-    )
-  }
-
   return (
     <div
       className={`reader-shell${focusMode ? ' reader-shell--focus' : ''}`}
@@ -216,14 +206,14 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
         </header>
       )}
 
-      <ZoomPane enabled={focusMode} onScaleChange={setZoomScale}>
+      <ZoomPane enabled={focusMode && !studyOpen} onScaleChange={setZoomScale}>
         <div className="reader-main">
           {book.format === 'epub' && (
             <EpubReader
               url={book.url}
               theme={theme}
               focusMode={focusMode}
-              swipeEnabled={swipeEnabled}
+              swipeEnabled={swipeEnabled && !studyOpen}
               onExitFocus={focusMode ? toggleFocusMode : undefined}
               onLookup={lookup}
               onNavLabel={setNavLabel}
@@ -233,7 +223,7 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
             <PdfReader
               url={book.url}
               focusMode={focusMode}
-              swipeEnabled={swipeEnabled}
+              swipeEnabled={swipeEnabled && !studyOpen}
               onExitFocus={focusMode ? toggleFocusMode : undefined}
               onLookup={lookup}
               onNavLabel={setNavLabel}
@@ -251,12 +241,22 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
         </div>
       </ZoomPane>
 
-      <TranslationPanel
-        state={translation}
-        onClose={clearTranslation}
-        isSaved={currentSaved}
-        onAddToStudy={addToStudy}
-      />
+      {!studyOpen && (
+        <TranslationPanel
+          state={translation}
+          onClose={clearTranslation}
+          isSaved={currentSaved}
+          onAddToStudy={addToStudy}
+        />
+      )}
+
+      {studyOpen && (
+        <Flashcards
+          cards={studyDeck}
+          onChange={updateStudyDeck}
+          onClose={() => setStudyOpen(false)}
+        />
+      )}
     </div>
   )
 }
