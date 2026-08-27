@@ -118,14 +118,18 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
     })
   }, [])
 
-  const toggleFocusMode = useCallback(() => {
-    setFocusMode((prev) => {
-      const next = !prev
-      saveFocusMode(next)
-      if (next) clearTranslation()
-      return next
-    })
-  }, [clearTranslation])
+  const setReadingMode = useCallback(
+    (on: boolean) => {
+      setFocusMode(on)
+      saveFocusMode(on)
+      if (on) clearTranslation()
+    },
+    [clearTranslation],
+  )
+
+  const toggleReadingMode = useCallback(() => {
+    setReadingMode(!focusMode)
+  }, [focusMode, setReadingMode])
 
   const openStudy = useCallback(() => {
     clearTranslation()
@@ -140,9 +144,7 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
           return
         }
         if (focusMode) {
-          setFocusMode(false)
-          saveFocusMode(false)
-          clearTranslation()
+          setReadingMode(false)
         } else {
           clearTranslation()
         }
@@ -153,7 +155,7 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
       window.removeEventListener('keydown', onKey)
       stopSpeaking()
     }
-  }, [clearTranslation, focusMode, studyOpen])
+  }, [clearTranslation, focusMode, setReadingMode, studyOpen])
 
   const currentSaved =
     translation.status === 'ready' &&
@@ -163,8 +165,20 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
     <div
       className={`reader-shell${focusMode ? ' reader-shell--focus' : ''}`}
     >
-      {!focusMode && (
-        <header className="reader-bar">
+      <aside
+        className={`reader-bar${focusMode ? ' reader-bar--collapsed' : ''}`}
+      >
+        <button
+          type="button"
+          className="reader-bar__toggle"
+          onClick={toggleReadingMode}
+          aria-expanded={!focusMode}
+          aria-label={focusMode ? 'Pokaż menu' : 'Tryb czytania — schowaj menu'}
+          title={focusMode ? 'Pokaż menu' : 'Tryb czytania — schowaj menu'}
+        >
+          <span className="reader-bar__toggle-icon" aria-hidden />
+        </button>
+        <div className="reader-bar__panel">
           <button type="button" className="reader-bar__back" onClick={onClose}>
             ← Biblioteka
           </button>
@@ -174,72 +188,65 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
             </span>
             {navLabel && <span className="reader-bar__nav">{navLabel}</span>}
           </div>
-          <label className="reader-bar__auto-speak">
-            <input
-              type="checkbox"
-              checked={autoSpeak}
-              onChange={toggleAutoSpeak}
-            />
-            <span>Czytaj kliknięte</span>
-          </label>
-          <button
-            type="button"
-            className="reader-bar__study"
-            onClick={openStudy}
-            title="Ćwicz zapisane słówka"
-          >
-            Ćwicz
-            {studyDeck.length > 0 && (
-              <span className="reader-bar__study-count">{studyDeck.length}</span>
-            )}
-          </button>
-          <button
-            type="button"
-            className="reader-bar__focus"
-            onClick={toggleFocusMode}
-            title="Tryb czytania — pełny ekran"
-          >
-            Czytanie
-          </button>
-          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+          <div className="reader-bar__actions">
+            <label className="reader-bar__auto-speak">
+              <input
+                type="checkbox"
+                checked={autoSpeak}
+                onChange={toggleAutoSpeak}
+              />
+              <span>Czytaj kliknięte</span>
+            </label>
+            <button
+              type="button"
+              className="reader-bar__study"
+              onClick={openStudy}
+              title="Ćwicz zapisane słówka"
+            >
+              Ćwicz
+              {studyDeck.length > 0 && (
+                <span className="reader-bar__study-count">{studyDeck.length}</span>
+              )}
+            </button>
+            <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+          </div>
           <span className="reader-bar__format">{book.format.toUpperCase()}</span>
-        </header>
-      )}
-
-      <ZoomPane enabled={focusMode && !studyOpen} onScaleChange={setZoomScale}>
-        <div className="reader-main">
-          {book.format === 'epub' && (
-            <EpubReader
-              url={book.url}
-              theme={theme}
-              focusMode={focusMode}
-              swipeEnabled={swipeEnabled && !studyOpen}
-              onExitFocus={focusMode ? toggleFocusMode : undefined}
-              onLookup={lookup}
-              onNavLabel={setNavLabel}
-            />
-          )}
-          {book.format === 'pdf' && (
-            <PdfReader
-              url={book.url}
-              focusMode={focusMode}
-              swipeEnabled={swipeEnabled && !studyOpen}
-              onExitFocus={focusMode ? toggleFocusMode : undefined}
-              onLookup={lookup}
-              onNavLabel={setNavLabel}
-            />
-          )}
-          {book.format === 'txt' && (
-            <TxtReader
-              file={book.file}
-              focusMode={focusMode}
-              onExitFocus={focusMode ? toggleFocusMode : undefined}
-              onLookup={lookup}
-              onNavLabel={setNavLabel}
-            />
-          )}
         </div>
-      </ZoomPane>
+      </aside>
+
+      <div className="reader-body">
+        <ZoomPane enabled={focusMode && !studyOpen} onScaleChange={setZoomScale}>
+          <div className="reader-main">
+            {book.format === 'epub' && (
+              <EpubReader
+                url={book.url}
+                theme={theme}
+                focusMode={focusMode}
+                swipeEnabled={swipeEnabled && !studyOpen}
+                onLookup={lookup}
+                onNavLabel={setNavLabel}
+              />
+            )}
+            {book.format === 'pdf' && (
+              <PdfReader
+                url={book.url}
+                focusMode={focusMode}
+                swipeEnabled={swipeEnabled && !studyOpen}
+                onLookup={lookup}
+                onNavLabel={setNavLabel}
+              />
+            )}
+            {book.format === 'txt' && (
+              <TxtReader
+                file={book.file}
+                focusMode={focusMode}
+                onLookup={lookup}
+                onNavLabel={setNavLabel}
+              />
+            )}
+          </div>
+        </ZoomPane>
+      </div>
 
       {!studyOpen && (
         <TranslationPanel

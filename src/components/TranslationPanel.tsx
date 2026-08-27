@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { TranslationResult, TranslationState } from '../types'
 import { speakEnglish } from '../lib/speech'
+import { translateSentence } from '../lib/translate'
 
 type Props = {
   state: TranslationState
@@ -17,6 +18,8 @@ export function TranslationPanel({
 }: Props) {
   const [contextOpen, setContextOpen] = useState(false)
   const [justAdded, setJustAdded] = useState(false)
+  const [contextPl, setContextPl] = useState<string | null>(null)
+  const [contextLoading, setContextLoading] = useState(false)
 
   const termKey =
     state.status === 'ready'
@@ -28,12 +31,34 @@ export function TranslationPanel({
   useEffect(() => {
     setContextOpen(false)
     setJustAdded(false)
-  }, [termKey])
+    setContextPl(
+      state.status === 'ready' ? state.result.contextTranslation ?? null : null,
+    )
+    setContextLoading(false)
+  }, [termKey, state])
 
   if (state.status === 'idle') return null
 
   const englishTerm = termKey
   const saved = isSaved || justAdded
+
+  const openContext = () => {
+    const opening = !contextOpen
+    setContextOpen(opening)
+    if (
+      opening &&
+      state.status === 'ready' &&
+      state.result.context &&
+      !contextPl &&
+      !contextLoading
+    ) {
+      setContextLoading(true)
+      void translateSentence(state.result.context).then((pl) => {
+        setContextPl(pl)
+        setContextLoading(false)
+      })
+    }
+  }
 
   return (
     <aside className="translation-panel" aria-live="polite">
@@ -50,7 +75,7 @@ export function TranslationPanel({
         {state.status === 'loading' && (
           <>
             <p className="translation-panel__term">{state.term}</p>
-            <p className="translation-panel__muted">Tłumaczę w kontekście…</p>
+            <p className="translation-panel__muted">Tłumaczę…</p>
           </>
         )}
 
@@ -91,13 +116,13 @@ export function TranslationPanel({
               </button>
             )}
 
-            {(state.result.context || state.result.contextTranslation) && (
+            {state.result.context && (
               <div className="translation-panel__context">
                 <button
                   type="button"
                   className="translation-panel__context-toggle"
                   aria-expanded={contextOpen}
-                  onClick={() => setContextOpen((o) => !o)}
+                  onClick={openContext}
                 >
                   <span>W kontekście</span>
                   <span className="translation-panel__chevron" aria-hidden="true">
@@ -106,15 +131,14 @@ export function TranslationPanel({
                 </button>
                 {contextOpen && (
                   <div className="translation-panel__context-body">
-                    {state.result.context && (
-                      <p className="translation-panel__context-en">
-                        {state.result.context}
-                      </p>
+                    <p className="translation-panel__context-en">
+                      {state.result.context}
+                    </p>
+                    {contextLoading && (
+                      <p className="translation-panel__muted">Tłumaczę zdanie…</p>
                     )}
-                    {state.result.contextTranslation && (
-                      <p className="translation-panel__context-pl">
-                        {state.result.contextTranslation}
-                      </p>
+                    {contextPl && (
+                      <p className="translation-panel__context-pl">{contextPl}</p>
                     )}
                   </div>
                 )}

@@ -23,7 +23,6 @@ type Props = {
   url: string
   focusMode?: boolean
   swipeEnabled?: boolean
-  onExitFocus?: () => void
   onLookup: (term: string, context?: string) => void
   onNavLabel: (label: string) => void
 }
@@ -32,7 +31,6 @@ export function PdfReader({
   url,
   focusMode = false,
   swipeEnabled = true,
-  onExitFocus,
   onLookup,
   onNavLabel,
 }: Props) {
@@ -152,21 +150,13 @@ export function PdfReader({
       const wrap = wrapRef.current
       const containerWidth = wrap?.clientWidth ?? 720
       const containerHeight = wrap?.clientHeight ?? 900
-      const isNarrow = containerWidth < 500
-      const padding = focusMode ? 4 : 24
+      const padX = focusMode ? 4 : 16
+      const padY = focusMode ? 4 : 12
 
-      let scale: number
-      if (focusMode) {
-        const scaleByWidth = (containerWidth - padding * 2) / base.width
-        const scaleByHeight = (containerHeight - padding * 2) / base.height
-        scale = Math.min(scaleByWidth, scaleByHeight)
-      } else {
-        const maxScale = isNarrow ? 1.1 : 1.6
-        scale = Math.min(
-          maxScale,
-          Math.max(0.85, (containerWidth - padding) / base.width),
-        )
-      }
+      // Fit entire page in the viewport — no scrolling a single PDF page.
+      const scaleByWidth = (containerWidth - padX * 2) / base.width
+      const scaleByHeight = (containerHeight - padY * 2) / base.height
+      const scale = Math.max(0.2, Math.min(scaleByWidth, scaleByHeight))
       const viewport = pdfPage.getViewport({ scale })
 
       const pageEl = wrapRef.current?.querySelector(
@@ -285,53 +275,46 @@ export function PdfReader({
 
   return (
     <div className={`pdf-reader${focusMode ? ' pdf-reader--focus' : ''}`}>
-      <div
-        className={`reader-nav reader-nav--sticky${focusMode ? ' reader-nav--focus' : ''}`}
-      >
-        {focusMode && onExitFocus && (
-          <button
-            type="button"
-            className="reader-nav__exit"
-            onClick={onExitFocus}
-            aria-label="Wyjdź z trybu czytania"
-          >
-            ✕
-          </button>
-        )}
-        <button type="button" disabled={page <= 1} onClick={goPrev}>
-          {focusMode ? '←' : '← Poprzednia'}
-        </button>
-        <span className="reader-nav__page">
-          {pageCount ? `${page} / ${pageCount}` : '—'}
-        </span>
-        <button
-          type="button"
-          disabled={!pageCount || page >= pageCount}
-          onClick={goNext}
-        >
-          {focusMode ? '→' : 'Następna →'}
-        </button>
-      </div>
-
       {loading && <p className="reader-status">Ładowanie PDF…</p>}
       {error && <p className="error-banner">{error}</p>}
 
-      <div className="pdf-wrap" ref={wrapRef}>
-        <div className="pdf-page">
-          <canvas ref={canvasRef} />
-          <div
-            ref={textLayerRef}
-            className="textLayer"
-            onPointerDown={onPointerDown}
-            onPointerUp={onPointerUp}
-          />
+      <div className="pdf-stage">
+        <div className="pdf-wrap" ref={wrapRef}>
+          <div className="pdf-page">
+            <canvas ref={canvasRef} />
+            <div
+              ref={textLayerRef}
+              className="textLayer"
+              onPointerDown={onPointerDown}
+              onPointerUp={onPointerUp}
+            />
+          </div>
         </div>
+
+        <nav className="reader-nav reader-nav--pdf" aria-label="Nawigacja stron">
+          <button
+            type="button"
+            className="reader-nav__prev"
+            disabled={page <= 1}
+            onClick={goPrev}
+            aria-label="Poprzednia strona"
+          >
+            ←
+          </button>
+          <span className="reader-nav__page">
+            {pageCount ? `${page} / ${pageCount}` : '—'}
+          </span>
+          <button
+            type="button"
+            className="reader-nav__next"
+            disabled={!pageCount || page >= pageCount}
+            onClick={goNext}
+            aria-label="Następna strona"
+          >
+            →
+          </button>
+        </nav>
       </div>
-      {!focusMode && (
-        <p className="reader-hint">
-          Dotknij słowo · przeciągnij w bok, by zmienić stronę
-        </p>
-      )}
     </div>
   )
 }

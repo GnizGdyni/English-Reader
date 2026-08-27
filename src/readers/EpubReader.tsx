@@ -9,7 +9,6 @@ type Props = {
   theme?: 'light' | 'dark'
   focusMode?: boolean
   swipeEnabled?: boolean
-  onExitFocus?: () => void
   onLookup: (term: string, context?: string) => void
   onNavLabel: (label: string) => void
 }
@@ -48,7 +47,6 @@ export function EpubReader({
   theme = 'light',
   focusMode = false,
   swipeEnabled = true,
-  onExitFocus,
   onLookup,
   onNavLabel,
 }: Props) {
@@ -158,33 +156,28 @@ export function EpubReader({
       className={`epub-reader${focusMode ? ' epub-reader--focus' : ''}`}
       ref={swipeRef}
     >
-      <div
-        className={`reader-nav reader-nav--sticky${focusMode ? ' reader-nav--focus' : ''}`}
-      >
-        {focusMode && onExitFocus && (
-          <button
-            type="button"
-            className="reader-nav__exit"
-            onClick={onExitFocus}
-            aria-label="Wyjdź z trybu czytania"
-          >
-            ✕
-          </button>
-        )}
-        <button type="button" onClick={goPrev} disabled={!ready}>
-          {focusMode ? '←' : '← Poprzednia'}
+      <nav className="reader-nav reader-nav--epub" aria-label="Nawigacja stron">
+        <button
+          type="button"
+          className="reader-nav__prev"
+          onClick={goPrev}
+          disabled={!ready}
+          aria-label="Poprzednia strona"
+        >
+          ←
         </button>
-        <button type="button" onClick={goNext} disabled={!ready}>
-          {focusMode ? '→' : 'Następna →'}
+        <button
+          type="button"
+          className="reader-nav__next"
+          onClick={goNext}
+          disabled={!ready}
+          aria-label="Następna strona"
+        >
+          →
         </button>
-      </div>
+      </nav>
       {error && <p className="error-banner">{error}</p>}
       <div ref={hostRef} className="epub-host" />
-      {!focusMode && (
-        <p className="reader-hint">
-          Zaznacz tekst · przeciągnij w bok, by zmienić stronę
-        </p>
-      )}
     </div>
   )
 }
