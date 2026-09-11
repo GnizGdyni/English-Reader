@@ -5,6 +5,24 @@ export type LoadedBook = {
   format: BookFormat
   url: string
   file: File
+  /** Supabase book id — sync postępu w chmurze */
+  cloudId?: string
+  initialPage?: number
+  initialCfi?: string
+}
+
+export type SavedBook = {
+  id: string
+  name: string
+  format: BookFormat
+  page: number
+  progressCfi?: string
+  createdAt: string
+}
+
+export type ReadingProgress = {
+  page: number
+  cfi?: string
 }
 
 export type TranslationResult = {

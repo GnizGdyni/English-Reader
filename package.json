@@ -13,6 +13,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.4",
     "core-js": "^3.50.0",
     "epubjs": "^0.3.93",
     "pdfjs-dist": "4.10.38",

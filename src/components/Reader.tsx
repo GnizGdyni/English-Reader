@@ -13,6 +13,11 @@ import {
   loadStudyDeck,
   saveStudyDeck,
 } from '../lib/studyDeck'
+import {
+  fetchStudyCardsFromCloud,
+  saveReadingProgress,
+  syncStudyCardsToCloud,
+} from '../lib/cloudApi'
 import type { Theme } from '../lib/theme'
 import type { LoadedBook, StudyCard, TranslationResult, TranslationState } from '../types'
 import { TranslationPanel } from './TranslationPanel'
@@ -28,9 +33,10 @@ type Props = {
   onClose: () => void
   theme: Theme
   onToggleTheme: () => void
+  userId?: string
 }
 
-export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
+export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
   const [translation, setTranslation] = useState<TranslationState>({
     status: 'idle',
   })
@@ -44,13 +50,64 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
   const lastLookupRef = useRef({ key: '', at: 0 })
   const autoSpeakRef = useRef(autoSpeak)
   autoSpeakRef.current = autoSpeak
+  const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastProgressRef = useRef({ page: book.initialPage ?? 1, cfi: book.initialCfi })
+
+  const cloudSync = Boolean(userId && book.cloudId)
 
   const swipeEnabled = !focusMode || zoomScale <= 1.02
 
-  const updateStudyDeck = useCallback((cards: StudyCard[]) => {
-    setStudyDeck(cards)
-    saveStudyDeck(cards)
-  }, [])
+  useEffect(() => {
+    if (!userId) return
+    let cancelled = false
+    fetchStudyCardsFromCloud()
+      .then((cards) => {
+        if (cancelled) return
+        setStudyDeck(cards)
+        saveStudyDeck(cards)
+      })
+      .catch(() => {
+        /* keep local deck */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+
+  const updateStudyDeck = useCallback(
+    (cards: StudyCard[]) => {
+      setStudyDeck(cards)
+      saveStudyDeck(cards)
+      if (userId) {
+        syncStudyCardsToCloud(cards).catch(() => {
+          /* offline — local copy remains */
+        })
+      }
+    },
+    [userId],
+  )
+
+  const queueProgressSave = useCallback(
+    (page: number, cfi?: string) => {
+      if (!cloudSync || !book.cloudId) return
+      lastProgressRef.current = { page, cfi }
+      if (progressTimerRef.current) clearTimeout(progressTimerRef.current)
+      progressTimerRef.current = setTimeout(() => {
+        saveReadingProgress(book.cloudId!, page, cfi)
+      }, 1500)
+    },
+    [book.cloudId, cloudSync],
+  )
+
+  useEffect(() => {
+    return () => {
+      if (progressTimerRef.current) clearTimeout(progressTimerRef.current)
+      if (cloudSync && book.cloudId) {
+        const { page, cfi } = lastProgressRef.current
+        saveReadingProgress(book.cloudId, page, cfi)
+      }
+    }
+  }, [book.cloudId, cloudSync])
 
   const addToStudy = useCallback(
     (result: TranslationResult) => {
@@ -135,6 +192,21 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
     clearTranslation()
     setStudyOpen(true)
   }, [clearTranslation])
+
+  const handlePdfPageChange = useCallback(
+    (page: number) => {
+      queueProgressSave(page)
+    },
+    [queueProgressSave],
+  )
+
+  const handleEpubProgress = useCallback(
+    (progress: { page?: number; cfi?: string }) => {
+      const page = progress.page ?? lastProgressRef.current.page
+      queueProgressSave(page, progress.cfi)
+    },
+    [queueProgressSave],
+  )
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -223,8 +295,10 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
                 theme={theme}
                 focusMode={focusMode}
                 swipeEnabled={swipeEnabled && !studyOpen}
+                initialCfi={book.initialCfi}
                 onLookup={lookup}
                 onNavLabel={setNavLabel}
+                onProgress={cloudSync ? handleEpubProgress : undefined}
               />
             )}
             {book.format === 'pdf' && (
@@ -232,8 +306,10 @@ export function Reader({ book, onClose, theme, onToggleTheme }: Props) {
                 url={book.url}
                 focusMode={focusMode}
                 swipeEnabled={swipeEnabled && !studyOpen}
+                initialPage={book.initialPage ?? 1}
                 onLookup={lookup}
                 onNavLabel={setNavLabel}
+                onPageChange={cloudSync ? handlePdfPageChange : undefined}
               />
             )}
             {book.format === 'txt' && (

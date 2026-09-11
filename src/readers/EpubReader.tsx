@@ -9,8 +9,10 @@ type Props = {
   theme?: 'light' | 'dark'
   focusMode?: boolean
   swipeEnabled?: boolean
+  initialCfi?: string
   onLookup: (term: string, context?: string) => void
   onNavLabel: (label: string) => void
+  onProgress?: (progress: { page?: number; cfi?: string }) => void
 }
 
 function applyEpubTheme(
@@ -47,8 +49,10 @@ export function EpubReader({
   theme = 'light',
   focusMode = false,
   swipeEnabled = true,
+  initialCfi,
   onLookup,
   onNavLabel,
+  onProgress,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
   const swipeRef = useRef<HTMLDivElement>(null)
@@ -57,6 +61,11 @@ export function EpubReader({
   onLookupRef.current = onLookup
   const themeRef = useRef(theme)
   themeRef.current = theme
+
+  const onProgressRef = useRef(onProgress)
+  onProgressRef.current = onProgress
+  const initialCfiRef = useRef(initialCfi)
+  initialCfiRef.current = initialCfi
 
   const [error, setError] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
@@ -108,9 +117,20 @@ export function EpubReader({
     rendition.on('selected', handleSelected)
     rendition.on('click', handleClick)
 
+    rendition.on('relocated', (location: { start?: { cfi?: string; displayed?: { page?: number } } }) => {
+      const cfi = location?.start?.cfi
+      const pageNum = location?.start?.displayed?.page
+      onProgressRef.current?.({
+        cfi,
+        page: pageNum && pageNum > 0 ? pageNum : undefined,
+      })
+    })
+
     book.ready
       .then(() => {
         if (cancelled) return
+        const cfi = initialCfiRef.current
+        if (cfi) return rendition.display(cfi)
         return rendition.display()
       })
       .then(() => {

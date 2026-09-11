@@ -23,16 +23,20 @@ type Props = {
   url: string
   focusMode?: boolean
   swipeEnabled?: boolean
+  initialPage?: number
   onLookup: (term: string, context?: string) => void
   onNavLabel: (label: string) => void
+  onPageChange?: (page: number) => void
 }
 
 export function PdfReader({
   url,
   focusMode = false,
   swipeEnabled = true,
+  initialPage = 1,
   onLookup,
   onNavLabel,
+  onPageChange,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const textLayerRef = useRef<HTMLDivElement>(null)
@@ -41,11 +45,14 @@ export function PdfReader({
   const pointerStart = useRef({ x: 0, y: 0 })
   const activeRenderRef = useRef<{ cancel: () => void } | null>(null)
   const activeTextLayerRef = useRef<{ cancel: () => void } | null>(null)
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useState(() => Math.max(1, initialPage))
   const [pageCount, setPageCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [layoutKey, setLayoutKey] = useState(0)
+
+  const initialPageRef = useRef(initialPage)
+  initialPageRef.current = initialPage
 
   const goPrev = useCallback(() => {
     setPage((p) => Math.max(1, p - 1))
@@ -83,7 +90,11 @@ export function PdfReader({
         }
         pdfRef.current = pdf
         setPageCount(pdf.numPages)
-        setPage(1)
+        const start = Math.min(
+          Math.max(1, initialPageRef.current),
+          pdf.numPages,
+        )
+        setPage(start)
         setLoading(false)
       })
       .catch((err: unknown) => {
@@ -109,7 +120,8 @@ export function PdfReader({
 
   useEffect(() => {
     onNavLabel(pageCount ? `Strona ${page} / ${pageCount}` : '')
-  }, [page, pageCount, onNavLabel])
+    onPageChange?.(page)
+  }, [page, pageCount, onNavLabel, onPageChange])
 
   useEffect(() => {
     const wrap = wrapRef.current
