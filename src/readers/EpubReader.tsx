@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ePub from 'epubjs'
 import type { Book, Contents, Rendition } from 'epubjs'
-import { lookupInDocument } from '../lib/selection'
+import { lookupInDocument, highlightLookup, clearLookupHighlight } from '../lib/selection'
 import { usePageSwipe } from '../hooks/usePageSwipe'
+import type { LookupPayload } from '../lib/selection'
 
 type Props = {
   url: string
@@ -10,10 +11,21 @@ type Props = {
   focusMode?: boolean
   swipeEnabled?: boolean
   initialCfi?: string
+  keepHighlight?: boolean
   onLookup: (term: string, context?: string) => void
   onNavLabel: (label: string) => void
   onProgress?: (progress: { page?: number; cfi?: string }) => void
 }
+
+const EPUB_HIGHLIGHT_CSS = `
+mark.lookup-highlight {
+  background: rgba(13, 110, 110, 0.4) !important;
+  color: inherit !important;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+`
 
 function applyEpubTheme(
   rendition: Rendition,
@@ -38,9 +50,11 @@ function applyEpubTheme(
 
 function emitLookup(
   onLookup: (term: string, context?: string) => void,
-  payload: { term: string; context?: string } | null,
+  doc: Document,
+  payload: LookupPayload | null,
 ) {
   if (!payload?.term) return
+  highlightLookup(doc, payload)
   onLookup(payload.term, payload.context)
 }
 
@@ -50,6 +64,7 @@ export function EpubReader({
   focusMode = false,
   swipeEnabled = true,
   initialCfi,
+  keepHighlight = false,
   onLookup,
   onNavLabel,
   onProgress,
@@ -57,6 +72,7 @@ export function EpubReader({
   const hostRef = useRef<HTMLDivElement>(null)
   const swipeRef = useRef<HTMLDivElement>(null)
   const renditionRef = useRef<Rendition | null>(null)
+  const contentsRef = useRef<Contents | null>(null)
   const onLookupRef = useRef(onLookup)
   onLookupRef.current = onLookup
   const themeRef = useRef(theme)
@@ -103,13 +119,31 @@ export function EpubReader({
 
     applyEpubTheme(rendition, themeRef.current, false)
 
+    rendition.hooks.content.register((contents: Contents) => {
+      contentsRef.current = contents
+      const doc = contents.document
+      if (!doc.head.querySelector('style[data-lookup-hl]')) {
+        const style = doc.createElement('style')
+        style.setAttribute('data-lookup-hl', '1')
+        style.textContent = EPUB_HIGHLIGHT_CSS
+        doc.head.appendChild(style)
+      }
+    })
+
     const handleSelected = (_cfiRange: string, contents: Contents) => {
-      emitLookup(onLookupRef.current, lookupInDocument(contents.document))
+      contentsRef.current = contents
+      emitLookup(
+        onLookupRef.current,
+        contents.document,
+        lookupInDocument(contents.document),
+      )
     }
 
     const handleClick = (e: MouseEvent, contents: Contents) => {
+      contentsRef.current = contents
       emitLookup(
         onLookupRef.current,
+        contents.document,
         lookupInDocument(contents.document, e.clientX, e.clientY),
       )
     }
@@ -162,6 +196,7 @@ export function EpubReader({
       rendition.destroy()
       void book.destroy()
       renditionRef.current = null
+      contentsRef.current = null
     }
   }, [url, onNavLabel])
 
@@ -170,6 +205,12 @@ export function EpubReader({
     if (!rendition || !ready) return
     applyEpubTheme(rendition, theme, focusMode)
   }, [theme, ready, focusMode])
+
+  useEffect(() => {
+    if (!keepHighlight) {
+      clearLookupHighlight(contentsRef.current?.document ?? null)
+    }
+  }, [keepHighlight])
 
   return (
     <div

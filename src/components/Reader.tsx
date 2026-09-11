@@ -233,6 +233,8 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
     translation.status === 'ready' &&
     hasStudyCard(studyDeck, translation.result.term)
 
+  const keepHighlight = translation.status !== 'idle'
+
   return (
     <div
       className={`reader-shell${focusMode ? ' reader-shell--focus' : ''}`}
@@ -296,6 +298,7 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
                 focusMode={focusMode}
                 swipeEnabled={swipeEnabled && !studyOpen}
                 initialCfi={book.initialCfi}
+                keepHighlight={keepHighlight}
                 onLookup={lookup}
                 onNavLabel={setNavLabel}
                 onProgress={cloudSync ? handleEpubProgress : undefined}
@@ -307,6 +310,7 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
                 focusMode={focusMode}
                 swipeEnabled={swipeEnabled && !studyOpen}
                 initialPage={book.initialPage ?? 1}
+                keepHighlight={keepHighlight}
                 onLookup={lookup}
                 onNavLabel={setNavLabel}
                 onPageChange={cloudSync ? handlePdfPageChange : undefined}
@@ -316,6 +320,7 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
               <TxtReader
                 file={book.file}
                 focusMode={focusMode}
+                keepHighlight={keepHighlight}
                 onLookup={lookup}
                 onNavLabel={setNavLabel}
               />

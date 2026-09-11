@@ -11,8 +11,11 @@ export type LookupPayload = {
   term: string
   /** Full sentence (or nearby text) containing the term. */
   context?: string
+  /** Absolute offsets in flattened text — for persistent highlight. */
+  highlight?: { start: number; end: number }
 }
 
+const HIGHLIGHT_CLASS = 'lookup-highlight'
 const isWordChar = (ch: string) => /[\p{L}\p{N}'’\-]/u.test(ch)
 
 function caretRangeAtPoint(
@@ -65,8 +68,7 @@ function collectTextNodes(root: Node): Text[] {
 }
 
 function textHost(node: Text): HTMLElement | null {
-  const el = node.parentElement
-  return el
+  return node.parentElement
 }
 
 /**
@@ -79,13 +81,11 @@ function shouldInsertSpace(prev: Text, next: Text): boolean {
   const b = next.textContent ?? ''
   if (!a || !b) return false
   if (/\s$/.test(a) || /^\s/.test(b)) return false
-  // Hyphenation across lines: keep glued
   if (/[-­\u2010\u2011]$/.test(a) && /^\p{L}/u.test(b)) return false
 
   const prevEl = textHost(prev)
   const nextEl = textHost(next)
   if (!prevEl || !nextEl) {
-    // Non-positioned text (TXT/EPUB): only soft heuristic for missing space
     return isWordChar(a[a.length - 1]!) && isWordChar(b[0]!)
   }
 
@@ -96,15 +96,12 @@ function shouldInsertSpace(prev: Text, next: Text): boolean {
   }
 
   const lineThreshold = Math.max(2, Math.min(pr.height, nr.height) * 0.45)
-  // New line / wrap
   if (nr.top > pr.top + lineThreshold) return true
 
-  // Same line with a visible gap between runs
   const gap = nr.left - pr.right
   const em = Math.max(pr.height, nr.height, 10)
   if (gap > em * 0.12) return true
 
-  // Tightly adjacent / overlapping → same word split across spans
   return false
 }
 
@@ -114,28 +111,107 @@ function shouldInsertSpace(prev: Text, next: Text): boolean {
  */
 function buildTextIndex(root: Node): {
   text: string
+  nodes: Array<{ node: Text; start: number }>
   indexOf: (node: Node, offset: number) => number | null
 } {
-  const nodes = collectTextNodes(root)
+  const nodesRaw = collectTextNodes(root)
   let text = ''
-  const starts: Array<{ node: Text; start: number }> = []
+  const nodes: Array<{ node: Text; start: number }> = []
 
-  for (let i = 0; i < nodes.length; i++) {
-    const node = nodes[i]!
-    if (i > 0 && shouldInsertSpace(nodes[i - 1]!, node)) {
+  for (let i = 0; i < nodesRaw.length; i++) {
+    const node = nodesRaw[i]!
+    if (i > 0 && shouldInsertSpace(nodesRaw[i - 1]!, node)) {
       text += ' '
     }
-    starts.push({ node, start: text.length })
+    nodes.push({ node, start: text.length })
     text += node.textContent ?? ''
   }
 
   const indexOf = (node: Node, offset: number): number | null => {
-    const entry = starts.find((s) => s.node === node)
+    const entry = nodes.find((s) => s.node === node)
     if (!entry) return null
     return entry.start + offset
   }
 
-  return { text, indexOf }
+  return { text, nodes, indexOf }
+}
+
+/** Remove previous lookup highlights under a root (or whole document). */
+export function clearLookupHighlight(root?: Document | HTMLElement | null) {
+  if (!root) return
+  const scope: ParentNode =
+    root instanceof Document ? (root.body ?? root) : root
+
+  const marks = scope.querySelectorAll(`.${HIGHLIGHT_CLASS}`)
+  marks.forEach((el) => {
+    const parent = el.parentNode
+    if (!parent) return
+    while (el.firstChild) parent.insertBefore(el.firstChild, el)
+    parent.removeChild(el)
+    parent.normalize()
+  })
+}
+
+function wrapTextPortion(
+  textNode: Text,
+  from: number,
+  to: number,
+  doc: Document,
+) {
+  const len = textNode.textContent?.length ?? 0
+  if (from >= to || from < 0 || to > len) return
+
+  const range = doc.createRange()
+  range.setStart(textNode, from)
+  range.setEnd(textNode, to)
+
+  const mark = doc.createElement('mark')
+  mark.className = HIGHLIGHT_CLASS
+  try {
+    range.surroundContents(mark)
+  } catch {
+    const frag = range.extractContents()
+    mark.appendChild(frag)
+    range.insertNode(mark)
+  }
+}
+
+/** Highlight a span of flattened text inside `root`. */
+export function applyLookupHighlight(
+  root: HTMLElement,
+  start: number,
+  end: number,
+) {
+  const doc = root.ownerDocument
+  if (!doc || start >= end) return
+
+  clearLookupHighlight(root)
+
+  const { nodes } = buildTextIndex(root)
+  for (const entry of nodes) {
+    const len = entry.node.textContent?.length ?? 0
+    const nodeStart = entry.start
+    const nodeEnd = nodeStart + len
+    const from = Math.max(start, nodeStart)
+    const to = Math.min(end, nodeEnd)
+    if (from < to) {
+      wrapTextPortion(entry.node, from - nodeStart, to - nodeStart, doc)
+    }
+  }
+
+  const first = root.querySelector(`.${HIGHLIGHT_CLASS}`)
+  first?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+}
+
+/** Apply highlight from a LookupPayload (if it carries offsets). */
+export function highlightLookup(
+  root: HTMLElement | Document | null | undefined,
+  payload: LookupPayload | null,
+) {
+  if (!root || !payload?.highlight) return
+  const el = root instanceof Document ? root.body : root
+  if (!el) return
+  applyLookupHighlight(el, payload.highlight.start, payload.highlight.end)
 }
 
 /** Sentence (or nearby chunk) containing [start, end) in `text`. */
@@ -145,7 +221,9 @@ export function sentenceAround(
   end: number,
 ): string {
   if (!text || start < 0 || end > text.length || start >= end) {
-    return text.slice(Math.max(0, start - 40), Math.min(text.length, end + 40)).trim()
+    return text
+      .slice(Math.max(0, start - 40), Math.min(text.length, end + 40))
+      .trim()
   }
 
   const boundary = /[.!?…\n\r]/
@@ -159,7 +237,6 @@ export function sentenceAround(
 
   let sentence = text.slice(from, to).replace(/\s+/g, ' ').trim()
 
-  // Fallback: window of nearby words if sentence is huge or empty
   if (!sentence || sentence.length > 280) {
     const winFrom = Math.max(0, start - 60)
     const winTo = Math.min(text.length, end + 60)
@@ -189,7 +266,11 @@ export function phraseAround(
   let to = end
   let wordsRight = radius
   while (to < text.length && wordsRight > 0) {
-    if (/\s/.test(text[to]!) && to + 1 < text.length && isWordChar(text[to + 1]!)) {
+    if (
+      /\s/.test(text[to]!) &&
+      to + 1 < text.length &&
+      isWordChar(text[to + 1]!)
+    ) {
       wordsRight--
     }
     to++
@@ -205,8 +286,12 @@ function wordBoundsInText(
   if (!text || offset < 0 || offset > text.length) return null
   let start = Math.min(offset, text.length)
   let end = start
-  // If caret is between words, nudge into a word
-  if (start < text.length && !isWordChar(text[start]!) && start > 0 && isWordChar(text[start - 1]!)) {
+  if (
+    start < text.length &&
+    !isWordChar(text[start]!) &&
+    start > 0 &&
+    isWordChar(text[start - 1]!)
+  ) {
     start--
     end = start + 1
   }
@@ -231,7 +316,6 @@ export function lookupAtPoint(
   const { text, indexOf } = buildTextIndex(container)
   const abs = indexOf(range.startContainer, range.startOffset)
   if (abs == null) {
-    // Fallback: only local text node
     const local = range.startContainer.textContent ?? ''
     const bounds = wordBoundsInText(local, range.startOffset)
     if (!bounds) return null
@@ -251,6 +335,7 @@ export function lookupAtPoint(
   return {
     term,
     context: sentenceAround(text, bounds.start, bounds.end),
+    highlight: { start: bounds.start, end: bounds.end },
   }
 }
 
@@ -274,7 +359,7 @@ export function selectionLookup(
   const doc =
     root instanceof Document
       ? root
-      : root?.ownerDocument ?? document
+      : (root?.ownerDocument ?? document)
   const selection = doc.getSelection()
   if (!selection || selection.isCollapsed || !selection.rangeCount) {
     return null
@@ -293,9 +378,10 @@ export function selectionLookup(
     return { term }
   }
 
-  // Prefer book root (article / textLayer / body) for full sentence
   const scope =
-    (container.closest('.txt-article, .textLayer, .epub-host') as HTMLElement | null) ??
+    (container.closest(
+      '.txt-article, .textLayer, .epub-host',
+    ) as HTMLElement | null) ??
     (root instanceof HTMLElement ? root : container)
 
   try {
@@ -307,19 +393,20 @@ export function selectionLookup(
       return {
         term: fromIndex || term,
         context: sentenceAround(text, start, end),
+        highlight: { start, end },
       }
     }
   } catch {
     /* fall through */
   }
 
-  // Local fallback from selected range's ancestor text
   const localText = scope.innerText || scope.textContent || term
   const idx = localText.toLowerCase().indexOf(term.toLowerCase())
   if (idx >= 0) {
     return {
       term,
       context: sentenceAround(localText, idx, idx + term.length),
+      highlight: { start: idx, end: idx + term.length },
     }
   }
 

@@ -8,6 +8,8 @@ import {
 import {
   lookupAtPoint,
   selectionLookup,
+  highlightLookup,
+  clearLookupHighlight,
 } from '../lib/selection'
 import { usePageSwipe } from '../hooks/usePageSwipe'
 import './pdf-text-layer.css'
@@ -24,6 +26,8 @@ type Props = {
   focusMode?: boolean
   swipeEnabled?: boolean
   initialPage?: number
+  /** Keep word highlight while translation panel is open. */
+  keepHighlight?: boolean
   onLookup: (term: string, context?: string) => void
   onNavLabel: (label: string) => void
   onPageChange?: (page: number) => void
@@ -34,6 +38,7 @@ export function PdfReader({
   focusMode = false,
   swipeEnabled = true,
   initialPage = 1,
+  keepHighlight = false,
   onLookup,
   onNavLabel,
   onPageChange,
@@ -246,15 +251,25 @@ export function PdfReader({
 
       const selected = selectionLookup(layer)
       if (selected) {
+        highlightLookup(layer, selected)
         onLookup(selected.term, selected.context)
         return
       }
 
       const hit = lookupAtPoint(layer, clientX, clientY)
-      if (hit) onLookup(hit.term, hit.context)
+      if (hit) {
+        highlightLookup(layer, hit)
+        onLookup(hit.term, hit.context)
+      }
     },
     [onLookup],
   )
+
+  useEffect(() => {
+    if (!keepHighlight) {
+      clearLookupHighlight(textLayerRef.current)
+    }
+  }, [keepHighlight])
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     pointerStart.current = { x: e.clientX, y: e.clientY }

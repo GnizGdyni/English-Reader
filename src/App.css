@@ -893,6 +893,20 @@ button {
   background: var(--accent-soft);
 }
 
+mark.lookup-highlight {
+  background: color-mix(in srgb, var(--accent) 42%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  padding: 0.05em 0;
+}
+
+.textLayer mark.lookup-highlight {
+  background: color-mix(in srgb, #0d6e6e 55%, transparent);
+  mix-blend-mode: multiply;
+}
+
 .translation-panel {
   position: fixed;
   left: 0;

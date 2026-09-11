@@ -63,6 +63,12 @@
   color: transparent;
 }
 
+.textLayer mark.lookup-highlight {
+  background: color-mix(in srgb, #0d6e6e, transparent 45%);
+  color: inherit;
+  border-radius: 1px;
+}
+
 .textLayer br::selection {
   background: transparent;
 }
