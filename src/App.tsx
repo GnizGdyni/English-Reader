@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { UploadDropzone } from './components/UploadDropzone'
 import { Reader } from './components/Reader'
 import { ThemeToggle } from './components/ThemeToggle'
@@ -13,7 +13,24 @@ function App() {
   const [book, setBook] = useState<LoadedBook | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
   const { theme, toggleTheme } = useTheme()
-  const { user, loading: authLoading, configured, signIn, signUp, signOut } = useAuth()
+  const {
+    user,
+    loading: authLoading,
+    configured,
+    passwordRecovery,
+    signIn,
+    signUp,
+    signOut,
+    resetPassword,
+    updatePassword,
+    clearPasswordRecovery,
+  } = useAuth()
+
+  useEffect(() => {
+    if (passwordRecovery) {
+      setAuthOpen(true)
+    }
+  }, [passwordRecovery])
 
   const closeBook = useCallback(() => {
     setBook((prev) => {
@@ -26,7 +43,12 @@ function App() {
     setBook(loaded)
   }, [])
 
-  if (book) {
+  const closeAuth = useCallback(() => {
+    setAuthOpen(false)
+    clearPasswordRecovery()
+  }, [clearPasswordRecovery])
+
+  if (book && !passwordRecovery) {
     return (
       <Reader
         book={book}
@@ -43,7 +65,7 @@ function App() {
       <div className="app-home__bar">
         {configured && !authLoading && (
           <div className="app-home__auth">
-            {user ? (
+            {user && !passwordRecovery ? (
               <>
                 <span className="app-home__user" title={user.email ?? ''}>
                   {user.email}
@@ -68,13 +90,16 @@ function App() {
 
       <UploadDropzone onLoad={openBook} />
 
-      {user && <LibraryPanel onOpenBook={openBook} />}
+      {user && !passwordRecovery && <LibraryPanel onOpenBook={openBook} />}
 
       {authOpen && (
         <AuthModal
-          onClose={() => setAuthOpen(false)}
+          onClose={closeAuth}
+          initialMode={passwordRecovery ? 'newPassword' : 'login'}
           onSignIn={signIn}
           onSignUp={signUp}
+          onResetPassword={resetPassword}
+          onUpdatePassword={updatePassword}
         />
       )}
     </div>

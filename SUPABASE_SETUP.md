@@ -47,13 +47,40 @@ Klik **Run**.
 3. **Private** (nie public)
 4. W **SQL Editor** uruchom ponownie sekcję polityk storage z `schema.sql` (od `create policy "books: read own"`)
 
-## 6. Auth (logowanie)
+## 6. Auth (logowanie + reset hasła)
 
 **Authentication** → **Providers** → **Email** → włącz
 
-Na start (bez maila potwierdzającego):
+Na start (bez maila potwierdzającego przy rejestracji):
 
 **Authentication** → **Providers** → Email → wyłącz **Confirm email**
+
+### Reset hasła — obowiązkowe URL-e
+
+**Authentication** → **URL Configuration**:
+
+1. **Site URL**
+   - lokalnie: `http://localhost:5173`
+   - produkcja: `https://twoja-domena.vercel.app`
+
+2. **Redirect URLs** — dodaj (Add URL):
+   - `http://localhost:5173/**`
+   - `https://twoja-domena.vercel.app/**`
+
+Bez tych URL link z maila nie wróci do apki.
+
+### Szablon maila (opcjonalnie)
+
+**Authentication** → **Email Templates** → **Reset Password**  
+Możesz zostawić domyślny tekst.
+
+### Jak testować w apce
+
+1. Zaloguj / Zarejestruj → **Nie pamiętam hasła**
+2. Podaj email → **Wyślij link**
+3. Otwórz mail (sprawdź spam)
+4. Kliknij link → apka otworzy formularz **Nowe hasło**
+5. Ustaw hasło → gotowe
 
 ## 7. Vercel (produkcja)
 

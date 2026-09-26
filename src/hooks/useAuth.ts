@@ -5,6 +5,7 @@ import { getSupabase, isSupabaseConfigured } from '../lib/supabase'
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(isSupabaseConfigured())
+  const [passwordRecovery, setPasswordRecovery] = useState(false)
 
   useEffect(() => {
     const supabase = getSupabase()
@@ -18,8 +19,14 @@ export function useAuth() {
       setLoading(false)
     })
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null)
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordRecovery(true)
+      }
+      if (event === 'SIGNED_OUT') {
+        setPasswordRecovery(false)
+      }
     })
 
     return () => sub.subscription.unsubscribe()
@@ -39,9 +46,31 @@ export function useAuth() {
     if (error) throw error
   }, [])
 
+  const resetPassword = useCallback(async (email: string) => {
+    const supabase = getSupabase()
+    if (!supabase) throw new Error('Supabase nie jest skonfigurowany.')
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/`,
+    })
+    if (error) throw error
+  }, [])
+
+  const updatePassword = useCallback(async (password: string) => {
+    const supabase = getSupabase()
+    if (!supabase) throw new Error('Supabase nie jest skonfigurowany.')
+    const { error } = await supabase.auth.updateUser({ password })
+    if (error) throw error
+    setPasswordRecovery(false)
+  }, [])
+
+  const clearPasswordRecovery = useCallback(() => {
+    setPasswordRecovery(false)
+  }, [])
+
   const signOut = useCallback(async () => {
     const supabase = getSupabase()
     if (!supabase) return
+    setPasswordRecovery(false)
     await supabase.auth.signOut()
   }, [])
 
@@ -49,8 +78,12 @@ export function useAuth() {
     user,
     loading,
     configured: isSupabaseConfigured(),
+    passwordRecovery,
     signIn,
     signUp,
     signOut,
+    resetPassword,
+    updatePassword,
+    clearPasswordRecovery,
   }
 }

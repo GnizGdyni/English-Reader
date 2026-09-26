@@ -1600,10 +1600,17 @@ mark.lookup-highlight {
   text-align: center;
 }
 
-.auth-modal__switch button {
+.auth-modal__switch button,
+.auth-modal__forgot button {
   border: none;
   background: none;
   color: var(--accent);
   font-weight: 600;
   padding: 0;
+}
+
+.auth-modal__forgot {
+  margin: 0.75rem 0 0;
+  text-align: center;
+  font-size: 0.85rem;
 }
