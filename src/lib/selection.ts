@@ -114,6 +114,9 @@ function buildTextIndex(root: Node): {
   nodes: Array<{ node: Text; start: number }>
   indexOf: (node: Node, offset: number) => number | null
 } {
+  const cached = textIndexCache.get(root)
+  if (cached) return cached
+
   const nodesRaw = collectTextNodes(root)
   let text = ''
   const nodes: Array<{ node: Text; start: number }> = []
@@ -133,7 +136,23 @@ function buildTextIndex(root: Node): {
     return entry.start + offset
   }
 
-  return { text, nodes, indexOf }
+  const built = { text, nodes, indexOf }
+  textIndexCache.set(root, built)
+  return built
+}
+
+const textIndexCache = new WeakMap<
+  Node,
+  {
+    text: string
+    nodes: Array<{ node: Text; start: number }>
+    indexOf: (node: Node, offset: number) => number | null
+  }
+>()
+
+/** Drop cached flattened text (call after DOM mutations / page change). */
+export function invalidateTextIndex(root?: Node | null) {
+  if (root) textIndexCache.delete(root)
 }
 
 /** Remove previous lookup highlights under a root (or whole document). */
@@ -150,6 +169,7 @@ export function clearLookupHighlight(root?: Document | HTMLElement | null) {
     parent.removeChild(el)
     parent.normalize()
   })
+  invalidateTextIndex(root instanceof Document ? root.body : root)
 }
 
 function wrapTextPortion(
@@ -157,6 +177,7 @@ function wrapTextPortion(
   from: number,
   to: number,
   doc: Document,
+  className = HIGHLIGHT_CLASS,
 ) {
   const len = textNode.textContent?.length ?? 0
   if (from >= to || from < 0 || to > len) return
@@ -166,7 +187,7 @@ function wrapTextPortion(
   range.setEnd(textNode, to)
 
   const mark = doc.createElement('mark')
-  mark.className = HIGHLIGHT_CLASS
+  mark.className = className
   try {
     range.surroundContents(mark)
   } catch {
@@ -181,11 +202,13 @@ export function applyLookupHighlight(
   root: HTMLElement,
   start: number,
   end: number,
+  className = HIGHLIGHT_CLASS,
 ) {
   const doc = root.ownerDocument
   if (!doc || start >= end) return
 
   clearLookupHighlight(root)
+  invalidateTextIndex(root)
 
   const { nodes } = buildTextIndex(root)
   for (const entry of nodes) {
@@ -195,23 +218,102 @@ export function applyLookupHighlight(
     const from = Math.max(start, nodeStart)
     const to = Math.min(end, nodeEnd)
     if (from < to) {
-      wrapTextPortion(entry.node, from - nodeStart, to - nodeStart, doc)
+      wrapTextPortion(entry.node, from - nodeStart, to - nodeStart, doc, className)
     }
   }
 
-  const first = root.querySelector(`.${HIGHLIGHT_CLASS}`)
-  first?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  invalidateTextIndex(root)
 }
 
 /** Apply highlight from a LookupPayload (if it carries offsets). */
 export function highlightLookup(
   root: HTMLElement | Document | null | undefined,
   payload: LookupPayload | null,
+  className = HIGHLIGHT_CLASS,
 ) {
   if (!root || !payload?.highlight) return
   const el = root instanceof Document ? root.body : root
   if (!el) return
-  applyLookupHighlight(el, payload.highlight.start, payload.highlight.end)
+  applyLookupHighlight(
+    el,
+    payload.highlight.start,
+    payload.highlight.end,
+    className,
+  )
+}
+
+/** Union of all highlight mark rects in viewport coordinates. */
+export function getHighlightAnchorRect(
+  root: HTMLElement | Document | null | undefined,
+): DOMRect | null {
+  if (!root) return null
+  const el = root instanceof Document ? root.body : root
+  if (!el) return null
+  const marks = el.querySelectorAll(`.${HIGHLIGHT_CLASS}`)
+  if (!marks.length) return null
+
+  let top = Infinity
+  let left = Infinity
+  let bottom = -Infinity
+  let right = -Infinity
+  marks.forEach((m) => {
+    const r = m.getBoundingClientRect()
+    if (r.width === 0 && r.height === 0) return
+    top = Math.min(top, r.top)
+    left = Math.min(left, r.left)
+    bottom = Math.max(bottom, r.bottom)
+    right = Math.max(right, r.right)
+  })
+  if (!Number.isFinite(top)) return null
+  return new DOMRect(left, top, right - left, bottom - top)
+}
+
+/** Sentence bounds from period/!/? to period (absolute offsets in flattened text). */
+export function sentenceBoundsAt(
+  text: string,
+  offset: number,
+): { start: number; end: number; text: string } | null {
+  if (!text || offset < 0 || offset > text.length) return null
+
+  // Period-to-period (+ ! ? … as sentence ends)
+  const boundary = /[.!?…]/
+  let from = Math.min(offset, text.length)
+  while (from > 0 && !boundary.test(text[from - 1]!)) from--
+  while (from < text.length && /\s/.test(text[from]!)) from++
+
+  let to = Math.min(offset, text.length)
+  while (to < text.length && !boundary.test(text[to]!)) to++
+  if (to < text.length && boundary.test(text[to]!)) to++
+
+  const sentence = text.slice(from, to).replace(/\s+/g, ' ').trim()
+  if (!sentence) return null
+  return { start: from, end: to, text: sentence }
+}
+
+/** Sentence under a click — for double-click translate. */
+export function sentenceAtPoint(
+  container: HTMLElement,
+  clientX: number,
+  clientY: number,
+): LookupPayload | null {
+  const doc = container.ownerDocument
+  const range = caretRangeAtPoint(doc, clientX, clientY)
+  if (!range || range.startContainer.nodeType !== Node.TEXT_NODE) {
+    return null
+  }
+
+  const { text, indexOf } = buildTextIndex(container)
+  const abs = indexOf(range.startContainer, range.startOffset)
+  if (abs == null) return null
+
+  const bounds = sentenceBoundsAt(text, abs)
+  if (!bounds) return null
+
+  return {
+    term: bounds.text,
+    context: bounds.text,
+    highlight: { start: bounds.start, end: bounds.end },
+  }
 }
 
 /** Sentence (or nearby chunk) containing [start, end) in `text`. */
@@ -226,24 +328,13 @@ export function sentenceAround(
       .trim()
   }
 
-  const boundary = /[.!?…\n\r]/
-  let from = start
-  while (from > 0 && !boundary.test(text[from - 1]!)) from--
-  while (from < start && /\s/.test(text[from]!)) from++
+  const mid = Math.floor((start + end) / 2)
+  const bounds = sentenceBoundsAt(text, mid)
+  if (bounds) return bounds.text
 
-  let to = end
-  while (to < text.length && !boundary.test(text[to]!)) to++
-  if (to < text.length && boundary.test(text[to]!)) to++
-
-  let sentence = text.slice(from, to).replace(/\s+/g, ' ').trim()
-
-  if (!sentence || sentence.length > 280) {
-    const winFrom = Math.max(0, start - 60)
-    const winTo = Math.min(text.length, end + 60)
-    sentence = text.slice(winFrom, winTo).replace(/\s+/g, ' ').trim()
-  }
-
-  return sentence
+  const winFrom = Math.max(0, start - 60)
+  const winTo = Math.min(text.length, end + 60)
+  return text.slice(winFrom, winTo).replace(/\s+/g, ' ').trim()
 }
 
 /** Short phrase around the term (± few words) — better for sense disambiguation. */
@@ -336,6 +427,345 @@ export function lookupAtPoint(
     term,
     context: sentenceAround(text, bounds.start, bounds.end),
     highlight: { start: bounds.start, end: bounds.end },
+  }
+}
+
+/** Absolute character index in flattened container text under a point. */
+export function absoluteIndexAtPoint(
+  container: HTMLElement,
+  clientX: number,
+  clientY: number,
+): number | null {
+  const doc = container.ownerDocument
+  const range = caretRangeAtPoint(doc, clientX, clientY)
+  if (!range) return null
+  const { indexOf } = buildTextIndex(container)
+  return indexOf(range.startContainer, range.startOffset)
+}
+
+/** Edge rects from a Range (cheap — no text index). */
+export function getRangeEdgeRects(
+  range: Range,
+): { start: DOMRect; end: DOMRect; bounds: DOMRect } | null {
+  const rects = Array.from(range.getClientRects()).filter(
+    (r) => r.width > 0 || r.height > 0,
+  )
+  if (!rects.length) {
+    const b = range.getBoundingClientRect()
+    if (b.width === 0 && b.height === 0) return null
+    return { start: b, end: b, bounds: b }
+  }
+
+  const first = rects[0]!
+  const last = rects[rects.length - 1]!
+  let top = Infinity
+  let left = Infinity
+  let bottom = -Infinity
+  let right = -Infinity
+  for (const r of rects) {
+    top = Math.min(top, r.top)
+    left = Math.min(left, r.left)
+    bottom = Math.max(bottom, r.bottom)
+    right = Math.max(right, r.right)
+  }
+  return {
+    start: first,
+    end: last,
+    bounds: new DOMRect(left, top, right - left, bottom - top),
+  }
+}
+
+/** Edge rects of the live Selection inside `root` (cheap — no text index). */
+export function getLiveSelectionEdgeRects(
+  root: HTMLElement | null | undefined,
+): { start: DOMRect; end: DOMRect; bounds: DOMRect } | null {
+  if (!root) return null
+  const doc = root.ownerDocument
+  const sel = doc.getSelection()
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return null
+
+  const range = sel.getRangeAt(0)
+  if (!root.contains(range.commonAncestorContainer)) return null
+  return getRangeEdgeRects(range)
+}
+
+/** Snapshot current selection as a detached Range clone. */
+export function cloneLiveSelectionRange(
+  root: HTMLElement | null | undefined,
+): Range | null {
+  if (!root) return null
+  const sel = root.ownerDocument.getSelection()
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return null
+  const range = sel.getRangeAt(0)
+  if (!root.contains(range.commonAncestorContainer)) return null
+  try {
+    return range.cloneRange()
+  } catch {
+    return null
+  }
+}
+
+/** Re-apply a stored range as the live Selection (mobile often clears it). */
+export function restoreSelectionRange(
+  root: HTMLElement,
+  range: Range,
+): boolean {
+  try {
+    const sel = root.ownerDocument.getSelection()
+    if (!sel) return false
+    sel.removeAllRanges()
+    sel.addRange(range.cloneRange())
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Move start or end of a Range to a caret under the point; updates live Selection. */
+export function moveSelectionEdgeToPoint(
+  root: HTMLElement,
+  which: 'start' | 'end',
+  clientX: number,
+  clientY: number,
+  baseRange?: Range | null,
+): Range | null {
+  const doc = root.ownerDocument
+  const sel = doc.getSelection()
+  const current =
+    baseRange?.cloneRange() ??
+    (sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null)
+  if (!current) return null
+
+  const caret = caretRangeAtPoint(doc, clientX, clientY)
+  if (!caret || !root.contains(caret.startContainer)) return null
+
+  const otherNode =
+    which === 'start' ? current.endContainer : current.startContainer
+  const otherOff = which === 'start' ? current.endOffset : current.startOffset
+
+  try {
+    const a = doc.createRange()
+    a.setStart(caret.startContainer, caret.startOffset)
+    a.collapse(true)
+    const b = doc.createRange()
+    b.setStart(otherNode, otherOff)
+    b.collapse(true)
+    const caretFirst = a.compareBoundaryPoints(Range.START_TO_START, b) <= 0
+
+    const range = doc.createRange()
+    if (caretFirst) {
+      range.setStart(caret.startContainer, caret.startOffset)
+      range.setEnd(otherNode, otherOff)
+    } else {
+      range.setStart(otherNode, otherOff)
+      range.setEnd(caret.startContainer, caret.startOffset)
+    }
+    if (range.collapsed) return null
+    restoreSelectionRange(root, range)
+    return range.cloneRange()
+  } catch {
+    return null
+  }
+}
+
+/** Build a Range for flattened offsets without touching the live Selection. */
+export function createRangeFromOffsets(
+  root: HTMLElement,
+  start: number,
+  end: number,
+): Range | null {
+  const doc = root.ownerDocument
+  if (!doc || start >= end) return null
+
+  const { nodes } = buildTextIndex(root)
+  let startNode: Text | null = null
+  let startOff = 0
+  let endNode: Text | null = null
+  let endOff = 0
+
+  for (const entry of nodes) {
+    const len = entry.node.textContent?.length ?? 0
+    const nodeStart = entry.start
+    const nodeEnd = nodeStart + len
+    if (!startNode && start >= nodeStart && start <= nodeEnd) {
+      startNode = entry.node
+      startOff = start - nodeStart
+    }
+    if (end > nodeStart && end <= nodeEnd) {
+      endNode = entry.node
+      endOff = end - nodeStart
+    } else if (end > nodeEnd && nodes[nodes.length - 1] === entry) {
+      endNode = entry.node
+      endOff = len
+    }
+  }
+
+  if (!startNode || !endNode) return null
+
+  try {
+    const range = doc.createRange()
+    range.setStart(startNode, Math.min(startOff, startNode.length))
+    range.setEnd(endNode, Math.min(endOff, endNode.length))
+    return range
+  } catch {
+    return null
+  }
+}
+
+/** Edge + band rects for a grip range (no Selection / no DOM mutation). */
+export function getOffsetsEdgeRects(
+  root: HTMLElement,
+  start: number,
+  end: number,
+): {
+  start: DOMRect
+  end: DOMRect
+  bounds: DOMRect
+  bands: DOMRect[]
+} | null {
+  const range = createRangeFromOffsets(root, start, end)
+  if (!range) return null
+  const edges = getRangeEdgeRects(range)
+  if (!edges) return null
+  const bands = Array.from(range.getClientRects()).filter(
+    (r) => r.width > 0 || r.height > 0,
+  )
+  return { ...edges, bands: bands.length ? bands : [edges.bounds] }
+}
+
+/** Lookup payload from flattened offsets (without relying on live Selection). */
+export function lookupFromOffsets(
+  root: HTMLElement,
+  start: number,
+  end: number,
+): LookupPayload | null {
+  if (start >= end) return null
+  const { text } = buildTextIndex(root)
+  const term = normalizeTerm(text.slice(start, end))
+  if (!term) return null
+  return {
+    term,
+    context: sentenceAround(text, start, end),
+    highlight: { start, end },
+  }
+}
+
+/** Build a live Selection covering flattened text [start, end). */
+export function selectTextRange(
+  root: HTMLElement,
+  start: number,
+  end: number,
+): boolean {
+  const doc = root.ownerDocument
+  if (!doc || start >= end) return false
+
+  const { nodes } = buildTextIndex(root)
+  let startNode: Text | null = null
+  let startOff = 0
+  let endNode: Text | null = null
+  let endOff = 0
+
+  for (const entry of nodes) {
+    const len = entry.node.textContent?.length ?? 0
+    const nodeStart = entry.start
+    const nodeEnd = nodeStart + len
+    if (!startNode && start >= nodeStart && start <= nodeEnd) {
+      startNode = entry.node
+      startOff = start - nodeStart
+    }
+    if (end > nodeStart && end <= nodeEnd) {
+      endNode = entry.node
+      endOff = end - nodeStart
+    } else if (end > nodeEnd && entry === nodes[nodes.length - 1]) {
+      endNode = entry.node
+      endOff = len
+    }
+  }
+
+  if (!startNode || !endNode) return false
+
+  try {
+    const range = doc.createRange()
+    range.setStart(startNode, Math.min(startOff, startNode.length))
+    range.setEnd(endNode, Math.min(endOff, endNode.length))
+    const sel = doc.getSelection()
+    if (!sel) return false
+    sel.removeAllRanges()
+    sel.addRange(range)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Select the word under a point (seed for long-press grips). Fast path avoids full-page index. */
+export function selectWordAtPoint(
+  container: HTMLElement,
+  clientX: number,
+  clientY: number,
+): boolean {
+  const doc = container.ownerDocument
+  const caret = caretRangeAtPoint(doc, clientX, clientY)
+  if (!caret || caret.startContainer.nodeType !== Node.TEXT_NODE) {
+    return false
+  }
+
+  const node = caret.startContainer as Text
+  const local = node.textContent ?? ''
+  const localBounds = wordBoundsInText(local, caret.startOffset)
+  if (localBounds) {
+    try {
+      const range = doc.createRange()
+      range.setStart(node, localBounds.start)
+      range.setEnd(node, localBounds.end)
+      if (!range.collapsed) {
+        const sel = doc.getSelection()
+        if (!sel) return false
+        sel.removeAllRanges()
+        sel.addRange(range)
+        return true
+      }
+    } catch {
+      /* fall through to indexed lookup */
+    }
+  }
+
+  const hit = lookupAtPoint(container, clientX, clientY)
+  if (!hit?.highlight) return false
+  return selectTextRange(container, hit.highlight.start, hit.highlight.end)
+}
+
+/** Extend selection from an anchor point to the current point. */
+export function extendSelectionToPoint(
+  container: HTMLElement,
+  anchorX: number,
+  anchorY: number,
+  clientX: number,
+  clientY: number,
+): boolean {
+  const doc = container.ownerDocument
+  const a = caretRangeAtPoint(doc, anchorX, anchorY)
+  const b = caretRangeAtPoint(doc, clientX, clientY)
+  if (!a || !b) return false
+
+  try {
+    const range = doc.createRange()
+    const cmp = a.compareBoundaryPoints(Range.START_TO_START, b)
+    if (cmp <= 0) {
+      range.setStart(a.startContainer, a.startOffset)
+      range.setEnd(b.startContainer, b.startOffset)
+    } else {
+      range.setStart(b.startContainer, b.startOffset)
+      range.setEnd(a.startContainer, a.startOffset)
+    }
+    if (range.collapsed) return false
+    const sel = doc.getSelection()
+    if (!sel) return false
+    sel.removeAllRanges()
+    sel.addRange(range)
+    return true
+  } catch {
+    return false
   }
 }
 

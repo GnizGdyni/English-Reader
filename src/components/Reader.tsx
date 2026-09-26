@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { translate } from '../lib/translate'
+import { translate, translateSentence } from '../lib/translate'
 import {
   loadAutoSpeak,
   saveAutoSpeak,
@@ -21,11 +21,12 @@ import {
 import type { Theme } from '../lib/theme'
 import type { LoadedBook, StudyCard, TranslationResult, TranslationState } from '../types'
 import { TranslationPanel } from './TranslationPanel'
+import { SentencePopup, type SentencePopupState } from './SentencePopup'
 import { ThemeToggle } from './ThemeToggle'
 import { ZoomPane } from './ZoomPane'
 import { Flashcards } from './Flashcards'
 import { EpubReader } from '../readers/EpubReader'
-import { PdfReader } from '../readers/PdfReader'
+import { PdfReader, type SentenceLookupPayload } from '../readers/PdfReader'
 import { TxtReader } from '../readers/TxtReader'
 
 type Props = {
@@ -46,7 +47,11 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
   const [zoomScale, setZoomScale] = useState(1)
   const [studyDeck, setStudyDeck] = useState<StudyCard[]>(loadStudyDeck)
   const [studyOpen, setStudyOpen] = useState(false)
+  const [sentencePopup, setSentencePopup] = useState<SentencePopupState | null>(
+    null,
+  )
   const requestId = useRef(0)
+  const sentenceRequestId = useRef(0)
   const lastLookupRef = useRef({ key: '', at: 0 })
   const autoSpeakRef = useRef(autoSpeak)
   autoSpeakRef.current = autoSpeak
@@ -136,6 +141,9 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
     }
     lastLookupRef.current = { key, at: now }
 
+    setSentencePopup(null)
+    sentenceRequestId.current += 1
+
     const id = ++requestId.current
     setTranslation((prev) => {
       if (prev.status === 'loading' && prev.term === term) return prev
@@ -161,11 +169,67 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
     }
   }, [])
 
+  const lookupSentence = useCallback(async (payload: SentenceLookupPayload) => {
+    const sentence = payload.sentence.trim()
+    if (!sentence) return
+
+    requestId.current += 1
+    setTranslation({ status: 'idle' })
+
+    const id = ++sentenceRequestId.current
+    setSentencePopup({
+      sentence,
+      translation: null,
+      loading: true,
+      anchor: payload.anchor,
+    })
+
+    try {
+      const pl = await translateSentence(sentence)
+      if (id !== sentenceRequestId.current) return
+      if (!pl) {
+        setSentencePopup({
+          sentence,
+          translation: null,
+          loading: false,
+          error: 'Nie udało się przetłumaczyć zdania.',
+          anchor: payload.anchor,
+        })
+        return
+      }
+      setSentencePopup({
+        sentence,
+        translation: pl,
+        loading: false,
+        anchor: payload.anchor,
+      })
+    } catch (err) {
+      if (id !== sentenceRequestId.current) return
+      setSentencePopup({
+        sentence,
+        translation: null,
+        loading: false,
+        error: err instanceof Error ? err.message : 'Błąd tłumaczenia zdania.',
+        anchor: payload.anchor,
+      })
+    }
+  }, [])
+
   const clearTranslation = useCallback(() => {
     requestId.current += 1
     stopSpeaking()
     setTranslation({ status: 'idle' })
   }, [])
+
+  const clearSentencePopup = useCallback(() => {
+    sentenceRequestId.current += 1
+    setSentencePopup(null)
+  }, [])
+
+  const clearAllLookups = useCallback(() => {
+    clearTranslation()
+    clearSentencePopup()
+  }, [clearTranslation, clearSentencePopup])
 
   const toggleAutoSpeak = useCallback(() => {
     setAutoSpeak((prev) => {
@@ -179,9 +243,9 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
     (on: boolean) => {
       setFocusMode(on)
       saveFocusMode(on)
-      if (on) clearTranslation()
+      if (on) clearAllLookups()
     },
-    [clearTranslation],
+    [clearAllLookups],
   )
 
   const toggleReadingMode = useCallback(() => {
@@ -189,9 +253,9 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
   }, [focusMode, setReadingMode])
 
   const openStudy = useCallback(() => {
-    clearTranslation()
+    clearAllLookups()
     setStudyOpen(true)
-  }, [clearTranslation])
+  }, [clearAllLookups])
 
   const handlePdfPageChange = useCallback(
     (page: number) => {
@@ -215,10 +279,14 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
           setStudyOpen(false)
           return
         }
+        if (sentencePopup) {
+          clearSentencePopup()
+          return
+        }
         if (focusMode) {
           setReadingMode(false)
         } else {
-          clearTranslation()
+          clearAllLookups()
         }
       }
     }
@@ -227,13 +295,21 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
       window.removeEventListener('keydown', onKey)
       stopSpeaking()
     }
-  }, [clearTranslation, focusMode, setReadingMode, studyOpen])
+  }, [
+    clearAllLookups,
+    clearSentencePopup,
+    focusMode,
+    sentencePopup,
+    setReadingMode,
+    studyOpen,
+  ])
 
   const currentSaved =
     translation.status === 'ready' &&
     hasStudyCard(studyDeck, translation.result.term)
 
-  const keepHighlight = translation.status !== 'idle'
+  const keepHighlight =
+    translation.status !== 'idle' || sentencePopup != null
 
   return (
     <div
@@ -300,6 +376,7 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
                 initialCfi={book.initialCfi}
                 keepHighlight={keepHighlight}
                 onLookup={lookup}
+                onSentenceLookup={lookupSentence}
                 onNavLabel={setNavLabel}
                 onProgress={cloudSync ? handleEpubProgress : undefined}
               />
@@ -312,6 +389,7 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
                 initialPage={book.initialPage ?? 1}
                 keepHighlight={keepHighlight}
                 onLookup={lookup}
+                onSentenceLookup={lookupSentence}
                 onNavLabel={setNavLabel}
                 onPageChange={cloudSync ? handlePdfPageChange : undefined}
               />
@@ -322,6 +400,7 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
                 focusMode={focusMode}
                 keepHighlight={keepHighlight}
                 onLookup={lookup}
+                onSentenceLookup={lookupSentence}
                 onNavLabel={setNavLabel}
               />
             )}
@@ -329,13 +408,17 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
         </ZoomPane>
       </div>
 
-      {!studyOpen && (
+      {!studyOpen && !sentencePopup && (
         <TranslationPanel
           state={translation}
           onClose={clearTranslation}
           isSaved={currentSaved}
           onAddToStudy={addToStudy}
         />
+      )}
+
+      {sentencePopup && (
+        <SentencePopup state={sentencePopup} onClose={clearSentencePopup} />
       )}
 
       {studyOpen && (

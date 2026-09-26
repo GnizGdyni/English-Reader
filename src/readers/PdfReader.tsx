@@ -10,8 +10,22 @@ import {
   selectionLookup,
   highlightLookup,
   clearLookupHighlight,
+  sentenceAtPoint,
+  getHighlightAnchorRect,
+  lookupFromOffsets,
+  invalidateTextIndex,
 } from '../lib/selection'
+import {
+  contentBoxFromInsets,
+  estimatePdfCropInsets,
+  type PdfCropInsets,
+} from '../lib/pdfContentBox'
 import { usePageSwipe } from '../hooks/usePageSwipe'
+import { usePressLookup } from '../hooks/usePressLookup'
+import {
+  SelectionHandles,
+  type GripRange,
+} from '../components/SelectionHandles'
 import './pdf-text-layer.css'
 
 function isRenderCancelled(err: unknown): boolean {
@@ -21,14 +35,19 @@ function isRenderCancelled(err: unknown): boolean {
   )
 }
 
+export type SentenceLookupPayload = {
+  sentence: string
+  anchor: { top: number; left: number; width: number; height: number }
+}
+
 type Props = {
   url: string
   focusMode?: boolean
   swipeEnabled?: boolean
   initialPage?: number
-  /** Keep word highlight while translation panel is open. */
   keepHighlight?: boolean
   onLookup: (term: string, context?: string) => void
+  onSentenceLookup?: (payload: SentenceLookupPayload) => void
   onNavLabel: (label: string) => void
   onPageChange?: (page: number) => void
 }
@@ -40,6 +59,7 @@ export function PdfReader({
   initialPage = 1,
   keepHighlight = false,
   onLookup,
+  onSentenceLookup,
   onNavLabel,
   onPageChange,
 }: Props) {
@@ -47,7 +67,7 @@ export function PdfReader({
   const textLayerRef = useRef<HTMLDivElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const pdfRef = useRef<PDFDocumentProxy | null>(null)
-  const pointerStart = useRef({ x: 0, y: 0 })
+  const cropInsetsRef = useRef<PdfCropInsets | null>(null)
   const activeRenderRef = useRef<{ cancel: () => void } | null>(null)
   const activeTextLayerRef = useRef<{ cancel: () => void } | null>(null)
   const [page, setPage] = useState(() => Math.max(1, initialPage))
@@ -55,6 +75,7 @@ export function PdfReader({
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [layoutKey, setLayoutKey] = useState(0)
+  const [gripRange, setGripRange] = useState<GripRange | null>(null)
 
   const initialPageRef = useRef(initialPage)
   initialPageRef.current = initialPage
@@ -86,14 +107,21 @@ export function PdfReader({
     setLoading(true)
     setError(null)
 
+    cropInsetsRef.current = null
     loadingTask = getDocument({ url, useSystemFonts: true })
     loadingTask.promise
-      .then((pdf) => {
+      .then(async (pdf) => {
+        if (cancelled) {
+          void pdf.cleanup()
+          return
+        }
+        const insets = await estimatePdfCropInsets(pdf)
         if (cancelled) {
           void pdf.cleanup()
           return
         }
         pdfRef.current = pdf
+        cropInsetsRef.current = insets
         setPageCount(pdf.numPages)
         const start = Math.min(
           Math.max(1, initialPageRef.current),
@@ -116,9 +144,8 @@ export function PdfReader({
       const task = loadingTask
       const doc = pdfRef.current
       pdfRef.current = null
+      cropInsetsRef.current = null
       loadingTask = null
-      // Destroy in order: document first, then the loading task.
-      // Both calls are async but cleanup can't be awaited in useEffect cleanup.
       void doc?.cleanup().then(() => task?.destroy())
     }
   }, [url, cancelPageRender])
@@ -163,45 +190,92 @@ export function PdfReader({
       const pdfPage = await pdf.getPage(page)
       if (cancelled) return
 
+      const insets = cropInsetsRef.current
+      const contentBox = insets
+        ? contentBoxFromInsets(pdfPage.view, insets)
+        : null
+
       const base = pdfPage.getViewport({ scale: 1 })
       const wrap = wrapRef.current
       const containerWidth = wrap?.clientWidth ?? 720
       const containerHeight = wrap?.clientHeight ?? 900
-      const padX = focusMode ? 4 : 16
-      const padY = focusMode ? 4 : 12
+      const padX = focusMode ? 4 : 12
+      const padY = focusMode ? 4 : 10
 
-      // Fit entire page in the viewport — no scrolling a single PDF page.
-      const scaleByWidth = (containerWidth - padX * 2) / base.width
-      const scaleByHeight = (containerHeight - padY * 2) / base.height
+      const contentW = contentBox
+        ? contentBox.maxX - contentBox.minX
+        : base.width
+      const contentH = contentBox
+        ? contentBox.maxY - contentBox.minY
+        : base.height
+
+      const scaleByWidth = (containerWidth - padX * 2) / contentW
+      const scaleByHeight = (containerHeight - padY * 2) / contentH
       const scale = Math.max(0.2, Math.min(scaleByWidth, scaleByHeight))
       const viewport = pdfPage.getViewport({ scale })
+
+      let cropLeft = 0
+      let cropTop = 0
+      let cropW = viewport.width
+      let cropH = viewport.height
+
+      if (contentBox) {
+        const [vx0, vy0] = viewport.convertToViewportPoint(
+          contentBox.minX,
+          contentBox.maxY,
+        )
+        const [vx1, vy1] = viewport.convertToViewportPoint(
+          contentBox.maxX,
+          contentBox.minY,
+        )
+        cropLeft = Math.min(vx0, vx1)
+        cropTop = Math.min(vy0, vy1)
+        cropW = Math.abs(vx1 - vx0)
+        cropH = Math.abs(vy1 - vy0)
+      }
 
       const pageEl = wrapRef.current?.querySelector(
         '.pdf-page',
       ) as HTMLElement | null
       if (pageEl) {
         pageEl.style.setProperty('--scale-factor', String(scale))
+        pageEl.style.width = `${Math.ceil(cropW)}px`
+        pageEl.style.height = `${Math.ceil(cropH)}px`
       }
 
       const ctx = canvas.getContext('2d', { alpha: false })
       if (!ctx) return
 
-      const w = Math.floor(viewport.width)
-      const h = Math.floor(viewport.height)
-      if (w * h > 16_000_000) {
+      const outW = Math.floor(cropW)
+      const outH = Math.floor(cropH)
+      if (outW * outH > 16_000_000) {
         throw new Error('Strona PDF jest za duża na ten telefon.')
       }
 
-      canvas.width = w
-      canvas.height = h
-      canvas.style.width = `${w}px`
-      canvas.style.height = `${h}px`
+      canvas.width = outW
+      canvas.height = outH
+      canvas.style.width = `${outW}px`
+      canvas.style.height = `${outH}px`
 
       textLayerDiv.innerHTML = ''
       textLayerDiv.className = 'textLayer'
       setLayerDimensions(textLayerDiv, viewport)
+      textLayerDiv.style.width = `${Math.floor(viewport.width)}px`
+      textLayerDiv.style.height = `${Math.floor(viewport.height)}px`
+      textLayerDiv.style.left = `${-cropLeft}px`
+      textLayerDiv.style.top = `${-cropTop}px`
 
-      const renderTask = pdfPage.render({ canvasContext: ctx, viewport })
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.clearRect(0, 0, outW, outH)
+
+      const renderTask = pdfPage.render({
+        canvasContext: ctx,
+        viewport,
+        transform:
+          contentBox && (cropLeft !== 0 || cropTop !== 0)
+            ? [1, 0, 0, 1, -cropLeft, -cropTop]
+            : undefined,
+      })
       activeRenderRef.current = renderTask
       try {
         await renderTask.promise
@@ -244,10 +318,19 @@ export function PdfReader({
     }
   }, [page, pageCount, loading, focusMode, layoutKey, cancelPageRender])
 
-  const runLookup = useCallback(
+  const clearGrips = useCallback(() => {
+    setGripRange(null)
+  }, [])
+
+  const runWordLookup = useCallback(
     (clientX: number, clientY: number) => {
       const layer = textLayerRef.current
       if (!layer) return
+
+      if (gripRange) {
+        clearGrips()
+        return
+      }
 
       const selected = selectionLookup(layer)
       if (selected) {
@@ -262,7 +345,61 @@ export function PdfReader({
         onLookup(hit.term, hit.context)
       }
     },
-    [onLookup],
+    [onLookup, gripRange, clearGrips],
+  )
+
+  const translateGrips = useCallback(() => {
+    const layer = textLayerRef.current
+    if (!layer || !gripRange) return
+    const payload = lookupFromOffsets(layer, gripRange.start, gripRange.end)
+    if (!payload) {
+      clearGrips()
+      return
+    }
+    highlightLookup(layer, payload)
+    onLookup(payload.term, payload.context)
+    setGripRange(null)
+  }, [onLookup, gripRange, clearGrips])
+
+  const openGripsAt = useCallback((clientX: number, clientY: number) => {
+    const layer = textLayerRef.current
+    if (!layer) return
+    // Own offsets + overlay — never toggle .selecting (that covers the page
+    // with .endOfContent and freezes taps on mobile).
+    const hit = lookupAtPoint(layer, clientX, clientY)
+    if (!hit?.highlight) return
+    layer.ownerDocument.getSelection()?.removeAllRanges()
+    setGripRange({ start: hit.highlight.start, end: hit.highlight.end })
+  }, [])
+
+  const runSentenceLookup = useCallback(
+    (clientX: number, clientY: number) => {
+      const layer = textLayerRef.current
+      if (!layer || !onSentenceLookup) return
+      clearGrips()
+
+      const hit = sentenceAtPoint(layer, clientX, clientY)
+      if (!hit?.highlight) return
+
+      highlightLookup(
+        layer,
+        hit,
+        'lookup-highlight lookup-highlight--sentence',
+      )
+      const rect = getHighlightAnchorRect(layer)
+      if (!rect) return
+
+      onSentenceLookup({
+        sentence: hit.term,
+        anchor: {
+          top: rect.top,
+          left: rect.left,
+          width: rect.width,
+          height: rect.height,
+        },
+      })
+    },
+    [onSentenceLookup, clearGrips],
   )
 
   useEffect(() => {
@@ -271,25 +408,16 @@ export function PdfReader({
     }
   }, [keepHighlight])
 
-  const onPointerDown = useCallback((e: React.PointerEvent) => {
-    pointerStart.current = { x: e.clientX, y: e.clientY }
-    textLayerRef.current?.classList.add('selecting')
-  }, [])
+  useEffect(() => {
+    clearGrips()
+    invalidateTextIndex(textLayerRef.current)
+  }, [page, clearGrips])
 
-  const onPointerUp = useCallback(
-    (e: React.PointerEvent) => {
-      textLayerRef.current?.classList.remove('selecting')
-
-      const dx = Math.abs(e.clientX - pointerStart.current.x)
-      const dy = Math.abs(e.clientY - pointerStart.current.y)
-      if (dx > 24 || dy > 24) return
-
-      window.setTimeout(() => {
-        runLookup(e.clientX, e.clientY)
-      }, 50)
-    },
-    [runLookup],
-  )
+  const press = usePressLookup({
+    onTap: runWordLookup,
+    onDoubleTap: runSentenceLookup,
+    onLongPress: openGripsAt,
+  })
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -312,8 +440,12 @@ export function PdfReader({
             <div
               ref={textLayerRef}
               className="textLayer"
-              onPointerDown={onPointerDown}
-              onPointerUp={onPointerUp}
+              onPointerDown={press.onPointerDown}
+              onPointerMove={press.onPointerMove}
+              onPointerUp={press.onPointerUp}
+              onPointerCancel={press.onPointerCancel}
+              onDoubleClick={press.onDoubleClick}
+              onContextMenu={(e) => e.preventDefault()}
             />
           </div>
         </div>
@@ -342,6 +474,14 @@ export function PdfReader({
           </button>
         </nav>
       </div>
+
+      <SelectionHandles
+        root={textLayerRef.current}
+        range={gripRange}
+        onRangeChange={setGripRange}
+        onTranslate={translateGrips}
+        onDismiss={clearGrips}
+      />
     </div>
   )
 }

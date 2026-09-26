@@ -91,6 +91,54 @@ button {
 
 .app-home {
   position: relative;
+  isolation: isolate;
+  min-height: 100%;
+}
+
+/* Soft atmospheric video background — stays behind content, no sound */
+.app-home__bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  background-color: var(--paper-deep);
+}
+
+.app-home__bg-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 40%;
+  opacity: 0.38;
+  filter: saturate(0.85) contrast(0.95);
+}
+
+.app-home__bg-veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--surface) 78%, transparent) 0%,
+    color-mix(in srgb, var(--paper) 72%, transparent) 45%,
+    color-mix(in srgb, var(--accent-soft) 55%, transparent) 100%
+  );
+}
+
+[data-theme="dark"] .app-home__bg-video {
+  opacity: 0.5;
+  filter: saturate(0.9) brightness(0.85);
+}
+
+[data-theme="dark"] .app-home__bg-veil {
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--surface) 70%, transparent) 0%,
+    color-mix(in srgb, #0a1a18 55%, transparent) 50%,
+    color-mix(in srgb, var(--accent-soft) 40%, transparent) 100%
+  );
 }
 
 .app-home__bar {
@@ -103,6 +151,12 @@ button {
   gap: 0.65rem;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.app-home > .home,
+.app-home > .library-panel {
+  position: relative;
+  z-index: 1;
 }
 
 .app-home__auth {
@@ -186,6 +240,7 @@ button {
   font-weight: 700;
   letter-spacing: -0.03em;
   color: var(--accent);
+  text-shadow: 0 1px 0 color-mix(in srgb, var(--surface) 70%, transparent);
 }
 
 .home-brand h1 {
@@ -194,6 +249,7 @@ button {
   font-weight: 500;
   letter-spacing: -0.02em;
   max-width: 22ch;
+  text-shadow: 0 1px 0 color-mix(in srgb, var(--surface) 65%, transparent);
 }
 
 .home-lead {
@@ -213,8 +269,10 @@ button {
   padding: 2rem;
   border: 2px dashed color-mix(in srgb, var(--accent) 45%, transparent);
   border-radius: calc(var(--radius) + 4px);
-  background: color-mix(in srgb, var(--surface) 85%, transparent);
-  backdrop-filter: blur(8px);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow);
   transition:
     border-color 0.2s ease,
     background 0.2s ease,
@@ -224,7 +282,7 @@ button {
 .dropzone:hover,
 .dropzone--active {
   border-color: var(--accent);
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent-soft) 80%, var(--surface));
   transform: translateY(-2px);
 }
 
@@ -242,7 +300,9 @@ button {
 
 .sample-book {
   border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
-  background: var(--card);
+  background: color-mix(in srgb, var(--card) 90%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   color: var(--accent);
   border-radius: var(--radius);
   padding: 0.85rem 1.15rem;
@@ -332,7 +392,9 @@ button {
   border-bottom: 2.5px solid currentColor;
   transform: rotate(-135deg);
   margin-top: 0.35rem;
-  transition: transform 0.2s ease, margin 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    margin 0.2s ease;
 }
 
 .reader-bar__panel {
@@ -861,6 +923,8 @@ button {
 }
 
 .pdf-page {
+  position: relative;
+  overflow: hidden;
   background: #fff;
   box-shadow: none;
   border-radius: 0;
@@ -871,6 +935,8 @@ button {
 
 .pdf-page canvas {
   display: block;
+  position: relative;
+  z-index: 0;
 }
 
 .txt-article {
@@ -902,9 +968,183 @@ mark.lookup-highlight {
   padding: 0.05em 0;
 }
 
+mark.lookup-highlight--sentence {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
 .textLayer mark.lookup-highlight {
   background: color-mix(in srgb, #0d6e6e 55%, transparent);
   mix-blend-mode: multiply;
+}
+
+.textLayer mark.lookup-highlight--sentence {
+  background: color-mix(in srgb, #0d6e6e 40%, transparent);
+  mix-blend-mode: multiply;
+}
+
+.sentence-popup {
+  position: fixed;
+  z-index: 45;
+  box-sizing: border-box;
+  max-width: none;
+  padding: 1rem 1.25rem 1.15rem;
+  background: #123536;
+  color: #e8f4f4;
+  border-radius: 14px;
+  box-shadow: 0 10px 36px rgba(18, 53, 54, 0.4);
+  pointer-events: auto;
+  animation: sentence-popup-in 0.18s ease;
+}
+
+/* Long-press selection grips */
+.sel-handles {
+  position: fixed;
+  inset: 0;
+  z-index: 46;
+  pointer-events: none;
+}
+
+.sel-handles__bar {
+  position: fixed;
+  pointer-events: auto;
+  transform: translate(0, -100%);
+  border: none;
+  border-radius: 999px;
+  padding: 0.45rem 1rem;
+  background: #123536;
+  color: #e8f4f4;
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  box-shadow: 0 6px 22px rgba(18, 53, 54, 0.4);
+  cursor: pointer;
+  white-space: nowrap;
+  touch-action: manipulation;
+}
+
+.sel-handles__bar:active {
+  transform: translate(0, -100%) scale(0.97);
+}
+
+.sel-handles__band {
+  position: fixed;
+  pointer-events: none;
+  background: color-mix(in srgb, #0d6e6e 38%, transparent);
+  border-radius: 2px;
+  z-index: 0;
+}
+
+.sel-handles__grip {
+  position: fixed;
+  pointer-events: auto;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  touch-action: none;
+  cursor: grab;
+  z-index: 1;
+  /* Anchor point = top center of the hit box (at text baseline). */
+  transform: translate(-50%, 0);
+}
+
+.sel-handles__grip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  border: 2.5px solid #123536;
+  background: #4eb8b8;
+  border-radius: 50%;
+  box-shadow: 0 2px 10px rgba(18, 53, 54, 0.35);
+}
+
+.sel-handles__grip::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 2.5px;
+  height: 8px;
+  margin-left: -1.25px;
+  background: #123536;
+  border-radius: 1px;
+}
+
+.sel-handles__grip--start {
+  transform: translate(-50%, 0);
+}
+
+.sel-handles__grip--end {
+  transform: translate(-50%, 0);
+}
+
+.sel-handles__grip:active {
+  cursor: grabbing;
+}
+
+.sel-handles__grip:active::after {
+  background: #7ad0d0;
+  transform: scale(1.1);
+}
+
+@keyframes sentence-popup-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.sentence-popup__close {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.5rem;
+  width: 1.85rem;
+  height: 1.85rem;
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, #fff 12%, transparent);
+  color: #c8e0e0;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.sentence-popup__en {
+  margin: 0 1.75rem 0.55rem 0;
+  font-size: 1.05rem;
+  line-height: 1.45;
+  color: color-mix(in srgb, #e8f4f4 78%, transparent);
+  font-style: italic;
+}
+
+.sentence-popup__pl {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.sentence-popup__muted {
+  margin: 0;
+  font-size: 1.05rem;
+  color: color-mix(in srgb, #e8f4f4 65%, transparent);
+}
+
+.sentence-popup__error {
+  margin: 0;
+  font-size: 1.05rem;
+  color: #f0a0a0;
 }
 
 .translation-panel {
@@ -913,7 +1153,7 @@ mark.lookup-highlight {
   right: 0;
   bottom: 0;
   z-index: 40;
-  padding: 0 1rem 1rem;
+  padding: 0 0.75rem 0.85rem;
   pointer-events: none;
   animation: panel-up 0.28s ease;
 }
@@ -931,14 +1171,16 @@ mark.lookup-highlight {
 
 .translation-panel__inner {
   pointer-events: auto;
-  max-width: 640px;
-  margin: 0 auto;
-  padding: 1.1rem 1.35rem 1.25rem;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 1.2rem 1.5rem 1.35rem;
   background: #123536;
   color: #e8f4f4;
   border-radius: var(--radius);
   box-shadow: 0 -8px 40px rgba(18, 53, 54, 0.35);
   position: relative;
+  box-sizing: border-box;
 }
 
 [data-theme="dark"] .translation-panel__inner {
@@ -959,8 +1201,8 @@ mark.lookup-highlight {
 }
 
 .translation-panel__term {
-  margin: 0 0 0.25rem;
-  font-size: 0.8rem;
+  margin: 0 0 0.3rem;
+  font-size: 0.95rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: #8eb8b8;
@@ -978,7 +1220,7 @@ mark.lookup-highlight {
 .translation-panel__pl {
   margin: 0;
   font-family: "Literata", Georgia, serif;
-  font-size: 1.35rem;
+  font-size: 1.55rem;
   font-weight: 600;
 }
 
@@ -1032,9 +1274,9 @@ mark.lookup-highlight {
 
 .translation-panel__expl {
   margin: 0.65rem 0 0;
-  font-size: 0.9rem;
+  font-size: 1.05rem;
   color: #c5dede;
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
 .translation-panel__context {
@@ -1076,17 +1318,17 @@ mark.lookup-highlight {
 
 .translation-panel__context-en {
   margin: 0.25rem 0 0;
-  font-size: 0.82rem;
+  font-size: 1.05rem;
   color: #9ec4c4;
-  line-height: 1.4;
+  line-height: 1.45;
   font-style: italic;
 }
 
 .translation-panel__context-pl {
   margin: 0.35rem 0 0;
-  font-size: 0.92rem;
+  font-size: 1.15rem;
   color: #e8f4f4;
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
 .translation-panel__muted {

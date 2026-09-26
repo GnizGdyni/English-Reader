@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import type { TranslationResult, TranslationState } from '../types'
 import { speakEnglish } from '../lib/speech'
 import { translateSentence } from '../lib/translate'
@@ -8,6 +8,11 @@ type Props = {
   onClose: () => void
   isSaved?: boolean
   onAddToStudy?: (result: TranslationResult) => void
+}
+
+function getPdfPageRect(): DOMRect | null {
+  const el = document.querySelector('.pdf-page')
+  return el?.getBoundingClientRect() ?? null
 }
 
 export function TranslationPanel({
@@ -20,6 +25,9 @@ export function TranslationPanel({
   const [justAdded, setJustAdded] = useState(false)
   const [contextPl, setContextPl] = useState<string | null>(null)
   const [contextLoading, setContextLoading] = useState(false)
+  const [pageBox, setPageBox] = useState<{ left: number; width: number } | null>(
+    null,
+  )
 
   const termKey =
     state.status === 'ready'
@@ -36,6 +44,23 @@ export function TranslationPanel({
     )
     setContextLoading(false)
   }, [termKey, state])
+
+  useLayoutEffect(() => {
+    if (state.status === 'idle') return
+
+    const sync = () => {
+      const page = getPdfPageRect()
+      if (page && page.width > 40) {
+        setPageBox({ left: page.left, width: page.width })
+      } else {
+        setPageBox(null)
+      }
+    }
+
+    sync()
+    window.addEventListener('resize', sync)
+    return () => window.removeEventListener('resize', sync)
+  }, [state.status, termKey])
 
   if (state.status === 'idle') return null
 
@@ -61,7 +86,21 @@ export function TranslationPanel({
   }
 
   return (
-    <aside className="translation-panel" aria-live="polite">
+    <aside
+      className="translation-panel"
+      aria-live="polite"
+      style={
+        pageBox
+          ? {
+              left: pageBox.left,
+              right: 'auto',
+              width: pageBox.width,
+              paddingLeft: 0,
+              paddingRight: 0,
+            }
+          : undefined
+      }
+    >
       <div className="translation-panel__inner">
         <button
           type="button"

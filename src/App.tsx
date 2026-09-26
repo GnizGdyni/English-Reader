@@ -62,6 +62,19 @@ function App() {
 
   return (
     <div className="app-home">
+      <div className="app-home__bg" aria-hidden="true">
+        <video
+          className="app-home__bg-video"
+          src={`${import.meta.env.BASE_URL}images/home-bg.mp4`}
+          poster={`${import.meta.env.BASE_URL}images/home-bg.png`}
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="metadata"
+        />
+        <div className="app-home__bg-veil" />
+      </div>
       <div className="app-home__bar">
         {configured && !authLoading && (
           <div className="app-home__auth">

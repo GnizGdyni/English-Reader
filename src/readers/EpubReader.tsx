@@ -1,9 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ePub from 'epubjs'
 import type { Book, Contents, Rendition } from 'epubjs'
-import { lookupInDocument, highlightLookup, clearLookupHighlight } from '../lib/selection'
+import {
+  lookupInDocument,
+  highlightLookup,
+  clearLookupHighlight,
+  sentenceAtPoint,
+  getHighlightAnchorRect,
+  lookupAtPoint,
+  lookupFromOffsets,
+} from '../lib/selection'
 import { usePageSwipe } from '../hooks/usePageSwipe'
 import type { LookupPayload } from '../lib/selection'
+import type { SentenceLookupPayload } from './PdfReader'
+import {
+  SelectionHandles,
+  type GripRange,
+} from '../components/SelectionHandles'
 
 type Props = {
   url: string
@@ -13,6 +26,7 @@ type Props = {
   initialCfi?: string
   keepHighlight?: boolean
   onLookup: (term: string, context?: string) => void
+  onSentenceLookup?: (payload: SentenceLookupPayload) => void
   onNavLabel: (label: string) => void
   onProgress?: (progress: { page?: number; cfi?: string }) => void
 }
@@ -24,6 +38,10 @@ mark.lookup-highlight {
   border-radius: 2px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
+}
+mark.lookup-highlight--sentence {
+  background: rgba(13, 110, 110, 0.28) !important;
+  box-shadow: inset 0 -2px 0 rgba(13, 110, 110, 0.55);
 }
 `
 
@@ -58,6 +76,14 @@ function emitLookup(
   onLookup(payload.term, payload.context)
 }
 
+function iframeOffset(doc: Document): { top: number; left: number } {
+  const win = doc.defaultView
+  const frame = win?.frameElement as HTMLElement | null
+  if (!frame) return { top: 0, left: 0 }
+  const r = frame.getBoundingClientRect()
+  return { top: r.top, left: r.left }
+}
+
 export function EpubReader({
   url,
   theme = 'light',
@@ -66,6 +92,7 @@ export function EpubReader({
   initialCfi,
   keepHighlight = false,
   onLookup,
+  onSentenceLookup,
   onNavLabel,
   onProgress,
 }: Props) {
@@ -75,6 +102,8 @@ export function EpubReader({
   const contentsRef = useRef<Contents | null>(null)
   const onLookupRef = useRef(onLookup)
   onLookupRef.current = onLookup
+  const onSentenceLookupRef = useRef(onSentenceLookup)
+  onSentenceLookupRef.current = onSentenceLookup
   const themeRef = useRef(theme)
   themeRef.current = theme
 
@@ -85,14 +114,37 @@ export function EpubReader({
 
   const [error, setError] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
+  const [gripRange, setGripRange] = useState<GripRange | null>(null)
+  const [frameOffset, setFrameOffset] = useState({ top: 0, left: 0 })
+  const gripRootRef = useRef<HTMLElement | null>(null)
+
+  const openGripsRef = useRef<(range: GripRange, body: HTMLElement) => void>(
+    () => {},
+  )
+  openGripsRef.current = (range, body) => {
+    gripRootRef.current = body
+    setFrameOffset(iframeOffset(body.ownerDocument))
+    body.ownerDocument.getSelection()?.removeAllRanges()
+    setGripRange(range)
+  }
+
+  const clearGrips = useCallback(() => {
+    setGripRange(null)
+  }, [])
+  const clearGripsRef = useRef(clearGrips)
+  clearGripsRef.current = clearGrips
+  const gripActiveRef = useRef(false)
+  gripActiveRef.current = gripRange != null
 
   const goPrev = useCallback(() => {
+    clearGrips()
     void renditionRef.current?.prev()
-  }, [])
+  }, [clearGrips])
 
   const goNext = useCallback(() => {
+    clearGrips()
     void renditionRef.current?.next()
-  }, [])
+  }, [clearGrips])
 
   usePageSwipe(swipeRef, {
     onPrev: goPrev,
@@ -119,6 +171,8 @@ export function EpubReader({
 
     applyEpubTheme(rendition, themeRef.current, false)
 
+    const cleanups: Array<() => void> = []
+
     rendition.hooks.content.register((contents: Contents) => {
       contentsRef.current = contents
       const doc = contents.document
@@ -128,6 +182,173 @@ export function EpubReader({
         style.textContent = EPUB_HIGHLIGHT_CSS
         doc.head.appendChild(style)
       }
+
+      let timer: ReturnType<typeof setTimeout> | null = null
+      let tapTimer: ReturnType<typeof setTimeout> | null = null
+      let start = { x: 0, y: 0 }
+      let longFired = false
+      let cancelledPress = false
+      let lastTap: { t: number; x: number; y: number } | null = null
+      const LONG_MS = 480
+      const DOUBLE_MS = 320
+      const MOVE = 14
+
+      const clearTimer = () => {
+        if (timer) {
+          clearTimeout(timer)
+          timer = null
+        }
+      }
+
+      const clearTapTimer = () => {
+        if (tapTimer) {
+          clearTimeout(tapTimer)
+          tapTimer = null
+        }
+      }
+
+      const runWord = (x: number, y: number) => {
+        if (gripActiveRef.current) {
+          clearGripsRef.current()
+          return
+        }
+        emitLookup(
+          onLookupRef.current,
+          doc,
+          lookupInDocument(doc, x, y),
+        )
+      }
+
+      const runSentence = (x: number, y: number) => {
+        const body = doc.body
+        const cb = onSentenceLookupRef.current
+        if (!body || !cb) return
+        clearGripsRef.current()
+        const hit = sentenceAtPoint(body, x, y)
+        if (!hit?.highlight) return
+        highlightLookup(
+          doc,
+          hit,
+          'lookup-highlight lookup-highlight--sentence',
+        )
+        const rect = getHighlightAnchorRect(doc)
+        if (!rect) return
+        const off = iframeOffset(doc)
+        cb({
+          sentence: hit.term,
+          anchor: {
+            top: rect.top + off.top,
+            left: rect.left + off.left,
+            width: rect.width,
+            height: rect.height,
+          },
+        })
+      }
+
+      const fireTapOrDouble = (x: number, y: number) => {
+        const now = Date.now()
+        if (
+          lastTap &&
+          now - lastTap.t <= DOUBLE_MS &&
+          Math.hypot(x - lastTap.x, y - lastTap.y) < 28
+        ) {
+          clearTapTimer()
+          lastTap = null
+          runSentence(x, y)
+          return
+        }
+        lastTap = { t: now, x, y }
+        clearTapTimer()
+        tapTimer = setTimeout(() => {
+          tapTimer = null
+          lastTap = null
+          if (longFired) return
+          runWord(x, y)
+        }, DOUBLE_MS)
+      }
+
+      const onDown = (e: PointerEvent) => {
+        if (e.button !== 0) return
+        longFired = false
+        cancelledPress = false
+        start = { x: e.clientX, y: e.clientY }
+        clearTimer()
+        timer = setTimeout(() => {
+          longFired = true
+          clearTapTimer()
+          lastTap = null
+          const body = doc.body
+          if (!body) return
+          const hit = lookupAtPoint(body, start.x, start.y)
+          if (!hit?.highlight) return
+          openGripsRef.current(
+            { start: hit.highlight.start, end: hit.highlight.end },
+            body,
+          )
+        }, LONG_MS)
+      }
+
+      const onMove = (e: PointerEvent) => {
+        if (longFired) return
+        if (!timer) return
+        if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > MOVE) {
+          clearTimer()
+          cancelledPress = true
+        }
+      }
+
+      const onUp = (e: PointerEvent) => {
+        clearTimer()
+        if (longFired) {
+          e.preventDefault()
+          e.stopPropagation()
+          longFired = false
+          return
+        }
+        if (cancelledPress) return
+        if (
+          Math.abs(e.clientX - start.x) > MOVE ||
+          Math.abs(e.clientY - start.y) > MOVE
+        ) {
+          return
+        }
+        fireTapOrDouble(e.clientX, e.clientY)
+      }
+
+      const onCancel = () => {
+        clearTimer()
+        clearTapTimer()
+        cancelledPress = true
+        longFired = false
+      }
+
+      const onDblClick = (e: MouseEvent) => {
+        clearTapTimer()
+        lastTap = null
+        runSentence(e.clientX, e.clientY)
+      }
+
+      const onContextMenu = (e: Event) => {
+        e.preventDefault()
+      }
+
+      doc.addEventListener('pointerdown', onDown)
+      doc.addEventListener('pointermove', onMove)
+      doc.addEventListener('pointerup', onUp)
+      doc.addEventListener('pointercancel', onCancel)
+      doc.addEventListener('dblclick', onDblClick)
+      doc.addEventListener('contextmenu', onContextMenu)
+
+      cleanups.push(() => {
+        clearTimer()
+        clearTapTimer()
+        doc.removeEventListener('pointerdown', onDown)
+        doc.removeEventListener('pointermove', onMove)
+        doc.removeEventListener('pointerup', onUp)
+        doc.removeEventListener('pointercancel', onCancel)
+        doc.removeEventListener('dblclick', onDblClick)
+        doc.removeEventListener('contextmenu', onContextMenu)
+      })
     })
 
     const handleSelected = (_cfiRange: string, contents: Contents) => {
@@ -139,17 +360,7 @@ export function EpubReader({
       )
     }
 
-    const handleClick = (e: MouseEvent, contents: Contents) => {
-      contentsRef.current = contents
-      emitLookup(
-        onLookupRef.current,
-        contents.document,
-        lookupInDocument(contents.document, e.clientX, e.clientY),
-      )
-    }
-
     rendition.on('selected', handleSelected)
-    rendition.on('click', handleClick)
 
     rendition.on('relocated', (location: { start?: { cfi?: string; displayed?: { page?: number } } }) => {
       const cfi = location?.start?.cfi
@@ -193,6 +404,7 @@ export function EpubReader({
     return () => {
       cancelled = true
       window.removeEventListener('keydown', onKey)
+      cleanups.forEach((fn) => fn())
       rendition.destroy()
       void book.destroy()
       renditionRef.current = null
@@ -239,6 +451,29 @@ export function EpubReader({
       </nav>
       {error && <p className="error-banner">{error}</p>}
       <div ref={hostRef} className="epub-host" />
+      <SelectionHandles
+        root={gripRootRef.current}
+        range={gripRange}
+        frameOffset={frameOffset}
+        onRangeChange={setGripRange}
+        onTranslate={() => {
+          const body = gripRootRef.current
+          if (!body || !gripRange) return
+          const payload = lookupFromOffsets(
+            body,
+            gripRange.start,
+            gripRange.end,
+          )
+          if (!payload) {
+            clearGrips()
+            return
+          }
+          highlightLookup(body.ownerDocument, payload)
+          onLookup(payload.term, payload.context)
+          setGripRange(null)
+        }}
+        onDismiss={clearGrips}
+      />
     </div>
   )
 }

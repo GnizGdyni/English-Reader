@@ -27,8 +27,9 @@
   caret-color: CanvasText;
   z-index: 2;
   touch-action: manipulation;
-  -webkit-user-select: text;
-  user-select: text;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
   --min-font-size: 1;
   --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
   --min-font-size-inv: calc(1 / var(--min-font-size));
@@ -40,7 +41,8 @@
   white-space: pre;
   cursor: text;
   transform-origin: 0% 0%;
-  user-select: text;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .textLayer > :not(.markedContent),
@@ -67,6 +69,10 @@
   background: color-mix(in srgb, #0d6e6e, transparent 45%);
   color: inherit;
   border-radius: 1px;
+}
+
+.textLayer mark.lookup-highlight--sentence {
+  background: color-mix(in srgb, #0d6e6e, transparent 55%);
 }
 
 .textLayer br::selection {

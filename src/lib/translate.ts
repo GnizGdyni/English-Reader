@@ -1,6 +1,6 @@
 import type { TranslationResult } from '../types'
 
-const CACHE_KEY = 'english-reader:translate-v8'
+const CACHE_KEY = 'english-reader:translate-v9'
 const CACHE_MAX = 400
 
 const cache = new Map<string, TranslationResult>()
@@ -111,13 +111,15 @@ async function fetchSimilarEn(
   term: string,
   context?: string,
 ): Promise<string[]> {
-  if (/\s/.test(term) || term.length < 2) return []
+  const key = term.toLowerCase().trim()
+  // Skip noise: short tokens, multi-word, stop-words
+  if (/\s/.test(term) || key.length < 3 || STOP.has(key)) return []
 
   const topics = (context ?? '')
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s'-]/gu, ' ')
     .split(/\s+/)
-    .filter((w) => w.length > 1 && !STOP.has(w) && w !== term.toLowerCase())
+    .filter((w) => w.length > 1 && !STOP.has(w) && w !== key)
     .slice(0, 4)
     .join('+')
 
@@ -134,9 +136,11 @@ async function fetchSimilarEn(
     for (const row of data) {
       const w = row.word?.trim()
       if (!w) continue
-      const key = w.toLowerCase()
-      if (key === term.toLowerCase() || seen.has(key) || key.includes(' ')) continue
-      seen.add(key)
+      const wKey = w.toLowerCase()
+      if (wKey === key || seen.has(wKey) || wKey.includes(' ') || STOP.has(wKey)) {
+        continue
+      }
+      seen.add(wKey)
       out.push(w)
       if (out.length >= 5) break
     }
@@ -266,7 +270,7 @@ export async function translate(
   const hasSentence =
     !!sentence && sentence.toLowerCase() !== term.toLowerCase()
 
-  const cacheKey = `v8::${term.toLowerCase()}::${(sentence ?? '').toLowerCase()}`
+  const cacheKey = `v9::${term.toLowerCase()}::${(sentence ?? '').toLowerCase()}`
   const cached = cache.get(cacheKey)
   if (cached) return cached
 
@@ -297,7 +301,6 @@ async function translateInternal(
   cacheKey: string,
 ): Promise<TranslationResult> {
   const hintQuery = senseHintQuery(term, sentence)
-  const pos = guessPos(term, sentence)
 
   const [directPl, similar] = await Promise.all([
     fetchTranslation(hintQuery),
@@ -307,7 +310,6 @@ async function translateInternal(
   const result: TranslationResult = {
     term,
     translation: pickGloss(term, directPl),
-    explanation: pos ? `(${pos})` : undefined,
     similar: similar.length ? similar : undefined,
   }
 
