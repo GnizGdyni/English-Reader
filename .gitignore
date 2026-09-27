@@ -16,6 +16,8 @@ dist-ssr
 data/dict/*
 !data/dict/.gitignore
 public/dict/
+dict-api/data/*
+!dict-api/data/.gitignore
 *.sqlite
 kaikki.org-dictionary-*.jsonl
 kaikki.org-dictionary-*.jsonl.gz
