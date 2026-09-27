@@ -85,8 +85,9 @@ function sanitize(raw: string): string | null {
 }
 
 /**
- * Safe lookup against local Kaikki SQLite (dev server API).
- * Never throws. Returns a structured debug object for the UI.
+ * Safe lookup against local / remote Kaikki SQLite API.
+ * Dev: Vite `/api/local-dict`. Prod: `VITE_DICT_API_URL`.
+ * Never throws.
  */
 export async function lookupLocalDict(term: string): Promise<LocalDictDebug> {
   const q = sanitize(term)
@@ -94,10 +95,21 @@ export async function lookupLocalDict(term: string): Promise<LocalDictDebug> {
     return { ok: false, query: term, reason: 'invalid_query' }
   }
 
+  const base = (import.meta.env.VITE_DICT_API_URL as string | undefined)?.replace(
+    /\/$/,
+    '',
+  )
+  const endpoint = base
+    ? `${base}/api/local-dict?q=${encodeURIComponent(q)}`
+    : `/api/local-dict?q=${encodeURIComponent(q)}`
+
+  // Remote free hosts may cold-start; local Vite is fast.
+  const timeoutMs = base ? 12000 : 2500
+
   try {
     const ctrl = new AbortController()
-    const timer = window.setTimeout(() => ctrl.abort(), 2500)
-    const res = await fetch(`/api/local-dict?q=${encodeURIComponent(q)}`, {
+    const timer = window.setTimeout(() => ctrl.abort(), timeoutMs)
+    const res = await fetch(endpoint, {
       signal: ctrl.signal,
       headers: { Accept: 'application/json' },
     })
@@ -113,7 +125,6 @@ export async function lookupLocalDict(term: string): Promise<LocalDictDebug> {
     }
     return data
   } catch {
-    // Production / offline / API missing — silent miss
     return { ok: false, query: q, reason: 'unavailable' }
   }
 }
