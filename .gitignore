@@ -12,6 +12,14 @@ dist
 dist-ssr
 *.local
 
+# Local Kaikki dictionary (too large for GitHub)
+data/dict/*
+!data/dict/.gitignore
+public/dict/
+*.sqlite
+kaikki.org-dictionary-*.jsonl
+kaikki.org-dictionary-*.jsonl.gz
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

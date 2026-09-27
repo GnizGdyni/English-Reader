@@ -1,23 +1,16 @@
 import type { TranslationResult } from '../types'
+import {
+  lookupLocalDict,
+  rankLocalDictByPos,
+  type LocalDictDebug,
+  type LocalDictEntry,
+} from './localDict'
 
-const CACHE_KEY = 'english-reader:translate-v9'
+const CACHE_KEY = 'english-reader:translate-v13'
 const CACHE_MAX = 400
 
 const cache = new Map<string, TranslationResult>()
 const inflight = new Map<string, Promise<TranslationResult>>()
-
-const STOP = new Set([
-  'a', 'an', 'the', 'and', 'or', 'but', 'if', 'in', 'on', 'at', 'to', 'for',
-  'of', 'as', 'by', 'with', 'from', 'into', 'about', 'than', 'then', 'that',
-  'this', 'these', 'those', 'it', 'its', 'is', 'are', 'was', 'were', 'be',
-  'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
-  'could', 'should', 'may', 'might', 'must', 'can', 'not', 'no', 'nor', 'so',
-  'he', 'she', 'they', 'we', 'you', 'i', 'me', 'him', 'her', 'them', 'my',
-  'your', 'his', 'their', 'our', 'what', 'which', 'who', 'whom', 'when',
-  'where', 'why', 'how', 'all', 'each', 'every', 'both', 'few', 'more',
-  'most', 'other', 'some', 'such', 'only', 'own', 'same', 'too', 'very',
-  'just', 'also', 'there', 'here', 'up', 'out', 'over', 'after', 'before',
-])
 
 function loadPersistentCache() {
   try {
@@ -104,50 +97,6 @@ async function fetchTranslation(text: string): Promise<string | null> {
   const primary = await fetchGoogleGtx(text)
   if (primary) return primary
   return fetchMyMemory(text)
-}
-
-/** Synonyms / related words via Datamuse (usually very fast). */
-async function fetchSimilarEn(
-  term: string,
-  context?: string,
-): Promise<string[]> {
-  const key = term.toLowerCase().trim()
-  // Skip noise: short tokens, multi-word, stop-words
-  if (/\s/.test(term) || key.length < 3 || STOP.has(key)) return []
-
-  const topics = (context ?? '')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s'-]/gu, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length > 1 && !STOP.has(w) && w !== key)
-    .slice(0, 4)
-    .join('+')
-
-  const url = topics
-    ? `https://api.datamuse.com/words?rel_syn=${encodeURIComponent(term)}&topics=${encodeURIComponent(topics)}&max=8`
-    : `https://api.datamuse.com/words?rel_syn=${encodeURIComponent(term)}&max=8`
-
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(2500) })
-    if (!res.ok) return []
-    const data = (await res.json()) as Array<{ word?: string }>
-    const seen = new Set<string>()
-    const out: string[] = []
-    for (const row of data) {
-      const w = row.word?.trim()
-      if (!w) continue
-      const wKey = w.toLowerCase()
-      if (wKey === key || seen.has(wKey) || wKey.includes(' ') || STOP.has(wKey)) {
-        continue
-      }
-      seen.add(wKey)
-      out.push(w)
-      if (out.length >= 5) break
-    }
-    return out
-  } catch {
-    return []
-  }
 }
 
 function wordCount(text: string): number {
@@ -248,19 +197,155 @@ function senseHintQuery(term: string, context?: string): string {
   return term
 }
 
-function pickGloss(term: string, directPl: string | null): string {
+function pickGloss(
+  term: string,
+  directPl: string | null,
+  dict: LocalDictDebug,
+): string {
   const direct = directPl ? cleanGloss(term, directPl) : ''
-  if (!direct || !isAcceptableGloss(term, direct)) {
-    throw new Error('Nie udało się przetłumaczyć. Spróbuj ponownie.')
+  if (direct && isAcceptableGloss(term, direct)) return direct
+
+  // Fallback: first Polish gloss from preferred / any local entry
+  const entries = dict.ok ? (dict.entries ?? []) : []
+  const ordered = [
+    ...entries.filter((e) => e.preferred),
+    ...entries.filter((e) => !e.preferred),
+  ]
+  for (const e of ordered) {
+    for (const pl of e.translations_pl) {
+      const cleaned = cleanGloss(term, pl)
+      if (cleaned && isAcceptableGloss(term, cleaned)) return cleaned
+    }
   }
-  return direct
+
+  throw new Error('Nie udało się przetłumaczyć. Spróbuj ponownie.')
+}
+
+function describeFormTags(tags: string | null): string | null {
+  if (!tags) return null
+  const t = tags.toLowerCase()
+  if (/\bplural\b/.test(t)) return 'liczbą mnogą'
+  if (/\bcomparative\b/.test(t)) return 'stopniem wyższym'
+  if (/\bsuperlative\b/.test(t)) return 'stopniem najwyższym'
+  if (/\bpast\b/.test(t) && /\bparticiple\b/.test(t)) return 'imiesłowem biernym'
+  if (/\bpresent\b/.test(t) && /\bparticiple\b/.test(t)) return 'formą -ing'
+  if (/\bthird-person\b/.test(t) || /\bthird person\b/.test(t)) {
+    return 'formą 3. os. liczby pojedynczej'
+  }
+  if (/\bpast\b/.test(t)) return 'formą czasu przeszłego'
+  return null
+}
+
+function buildFormExplanation(dict: LocalDictDebug): string | null {
+  const via = dict.viaForm
+  if (!via) return null
+  const form = via.form.trim()
+  const lemma = via.lemma.trim()
+  if (!form || !lemma) return null
+  if (form.toLowerCase() === lemma.toLowerCase()) return null
+
+  const kind = describeFormTags(via.tags) ?? 'formą'
+  return `Forma „${form}” to ${kind} od „${lemma}”.`
+}
+
+function shortGlossClause(gloss: string | null | undefined): string | null {
+  if (!gloss) return null
+  const first = gloss
+    .split('|')[0]
+    ?.split(/[.;]/)[0]
+    ?.replace(/\s+/g, ' ')
+    .trim()
+  if (!first) return null
+  if (first.length < 18 || first.length > 140) return null
+  // Skip archaic / noisy scraps
+  if (/[ſſ]|\[\.\.\.\]|^\W/.test(first)) return null
+  return first
+}
+
+function contextTokens(context: string | undefined, term: string): Set<string> {
+  const key = term.toLowerCase()
+  const out = new Set<string>()
+  if (!context) return out
+  for (const w of context.toLowerCase().match(/[\p{L}']+/gu) ?? []) {
+    if (w.length > 2 && w !== key) out.add(w)
+  }
+  return out
+}
+
+function isUsableExample(ex: string): boolean {
+  const t = ex.replace(/\s+/g, ' ').trim()
+  if (t.length < 12 || t.length > 160) return false
+  if (/[ſ]|\[\.\.\.\]|^\W/.test(t)) return false
+  if ((t.match(/\s+/g) ?? []).length < 2) return false
+  return true
 }
 
 /**
- * Fast lookup:
- * 1) Google (term) — Polish gloss
- * 2) Datamuse — English synonyms (parallel, usually ~fast)
- * Sentence PL loads later via translateSentence().
+ * Pick one example: prefer preferred POS entries, then overlap with reading
+ * context, then presence of the looked-up form / lemma.
+ */
+function pickExample(
+  dict: LocalDictDebug,
+  term: string,
+  context: string | undefined,
+): string | null {
+  if (!dict.ok || !dict.entries?.length) return null
+
+  const lemma = (dict.lemma ?? term).toLowerCase()
+  const form = term.toLowerCase()
+  const ctx = contextTokens(context, term)
+  const seen = new Set<string>()
+  const candidates: Array<{ ex: string; score: number }> = []
+
+  const consider = (entry: LocalDictEntry, boost: number) => {
+    for (const raw of entry.examples) {
+      if (!isUsableExample(raw)) continue
+      const ex = raw.replace(/\s+/g, ' ').trim()
+      const key = ex.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+
+      let score = boost
+      const lower = key
+      if (new RegExp(`\\b${form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(lower)) {
+        score += 8
+      } else if (
+        new RegExp(`\\b${lemma.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(
+          lower,
+        )
+      ) {
+        score += 5
+      }
+
+      for (const w of lower.match(/[\p{L}']+/gu) ?? []) {
+        if (ctx.has(w)) score += 2
+      }
+
+      // Prefer mid-length readable examples
+      const len = ex.length
+      if (len >= 35 && len <= 110) score += 2
+
+      candidates.push({ ex, score })
+    }
+  }
+
+  for (const e of dict.entries) {
+    consider(e, e.preferred ? 10 : 0)
+  }
+
+  if (!candidates.length) return null
+  candidates.sort((a, b) => b.score - a.score || a.ex.length - b.ex.length)
+  return candidates[0]!.ex
+}
+
+function primaryEntry(dict: LocalDictDebug): LocalDictEntry | null {
+  if (!dict.ok || !dict.entries?.length) return null
+  return dict.entries.find((e) => e.preferred) ?? dict.entries[0] ?? null
+}
+
+/**
+ * Contextual EN→PL word lookup powered by Google + local Kaikki SQLite.
+ * Local dict never breaks the main gloss; example/explanation are optional.
  */
 export async function translate(
   term: string,
@@ -270,7 +355,7 @@ export async function translate(
   const hasSentence =
     !!sentence && sentence.toLowerCase() !== term.toLowerCase()
 
-  const cacheKey = `v9::${term.toLowerCase()}::${(sentence ?? '').toLowerCase()}`
+  const cacheKey = `v13::${term.toLowerCase()}::${(sentence ?? '').toLowerCase()}`
   const cached = cache.get(cacheKey)
   if (cached) return cached
 
@@ -302,15 +387,81 @@ async function translateInternal(
 ): Promise<TranslationResult> {
   const hintQuery = senseHintQuery(term, sentence)
 
-  const [directPl, similar] = await Promise.all([
+  const localDictPromise = lookupLocalDict(term).catch(
+    (): LocalDictDebug => ({
+      ok: false,
+      query: term,
+      reason: 'client_error',
+    }),
+  )
+
+  const [directPl, localDictRaw] = await Promise.all([
     fetchTranslation(hintQuery),
-    fetchSimilarEn(term, sentence),
+    localDictPromise,
   ])
+
+  const guessedPos = hasSentence && sentence ? guessPos(term, sentence) : null
+  const dict = rankLocalDictByPos(localDictRaw, guessedPos)
+
+  const translation = pickGloss(term, directPl, dict)
+  const headword =
+    dict.ok && dict.lemma && dict.lemma.toLowerCase() !== term.toLowerCase()
+      ? dict.lemma
+      : term
+
+  const formNote = dict.ok ? buildFormExplanation(dict) : null
+  const entry = primaryEntry(dict)
+  const glossClause = shortGlossClause(entry?.gloss)
+
+  const exampleEn = pickExample(
+    dict,
+    term,
+    hasSentence ? sentence : undefined,
+  )
+
+  // Optional extras — never fail the whole lookup
+  const [examplePl, glossPl] = await Promise.all([
+    exampleEn
+      ? fetchTranslation(exampleEn).catch(() => null)
+      : Promise.resolve(null),
+    glossClause
+      ? fetchTranslation(glossClause).catch(() => null)
+      : Promise.resolve(null),
+  ])
+
+  const explanationParts: string[] = []
+  if (formNote) explanationParts.push(formNote)
+  if (glossPl) {
+    const cleaned = glossPl.replace(/\s+/g, ' ').trim()
+    if (
+      cleaned &&
+      cleaned.length >= 12 &&
+      cleaned.length <= 180 &&
+      cleaned.toLowerCase() !== translation.toLowerCase()
+    ) {
+      explanationParts.push(cleaned)
+    }
+  }
+  const explanation =
+    explanationParts.length > 0 ? explanationParts.join(' ') : undefined
 
   const result: TranslationResult = {
     term,
-    translation: pickGloss(term, directPl),
-    similar: similar.length ? similar : undefined,
+    headword: headword !== term ? headword : undefined,
+    translation,
+    explanation,
+  }
+
+  if (exampleEn) {
+    result.example = {
+      en: exampleEn,
+      pl:
+        examplePl &&
+        examplePl.toLowerCase() !== exampleEn.toLowerCase() &&
+        !/mymemory|quota|warning/i.test(examplePl)
+          ? examplePl
+          : null,
+    }
   }
 
   if (hasSentence && sentence) {

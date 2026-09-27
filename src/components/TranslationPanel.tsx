@@ -1,7 +1,6 @@
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react'
 import type { TranslationResult, TranslationState } from '../types'
 import { speakEnglish } from '../lib/speech'
-import { translateSentence } from '../lib/translate'
 
 type Props = {
   state: TranslationState
@@ -15,16 +14,40 @@ function getPdfPageRect(): DOMRect | null {
   return el?.getBoundingClientRect() ?? null
 }
 
+/** Bold the looked-up term / headword inside an example sentence. */
+function highlightTerm(text: string, ...needles: string[]): ReactNode {
+  const parts = needles
+    .map((n) => n.trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+  if (!parts.length) return text
+
+  const escaped = parts.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  const re = new RegExp(`\\b(${escaped.join('|')})\\b`, 'gi')
+  const nodes: ReactNode[] = []
+  let last = 0
+  let m: RegExpExecArray | null
+  let i = 0
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index))
+    nodes.push(
+      <strong key={`h-${i++}`} className="translation-panel__ex-hit">
+        {m[0]}
+      </strong>,
+    )
+    last = m.index + m[0].length
+  }
+  if (last < text.length) nodes.push(text.slice(last))
+  return nodes.length ? nodes : text
+}
+
 export function TranslationPanel({
   state,
   onClose,
   isSaved = false,
   onAddToStudy,
 }: Props) {
-  const [contextOpen, setContextOpen] = useState(false)
   const [justAdded, setJustAdded] = useState(false)
-  const [contextPl, setContextPl] = useState<string | null>(null)
-  const [contextLoading, setContextLoading] = useState(false)
   const [pageBox, setPageBox] = useState<{ left: number; width: number } | null>(
     null,
   )
@@ -37,12 +60,7 @@ export function TranslationPanel({
         : ''
 
   useEffect(() => {
-    setContextOpen(false)
     setJustAdded(false)
-    setContextPl(
-      state.status === 'ready' ? state.result.contextTranslation ?? null : null,
-    )
-    setContextLoading(false)
   }, [termKey, state])
 
   useLayoutEffect(() => {
@@ -66,24 +84,6 @@ export function TranslationPanel({
 
   const englishTerm = termKey
   const saved = isSaved || justAdded
-
-  const openContext = () => {
-    const opening = !contextOpen
-    setContextOpen(opening)
-    if (
-      opening &&
-      state.status === 'ready' &&
-      state.result.context &&
-      !contextPl &&
-      !contextLoading
-    ) {
-      setContextLoading(true)
-      void translateSentence(state.result.context).then((pl) => {
-        setContextPl(pl)
-        setContextLoading(false)
-      })
-    }
-  }
 
   return (
     <aside
@@ -113,89 +113,95 @@ export function TranslationPanel({
 
         {state.status === 'loading' && (
           <>
-            <p className="translation-panel__term">{state.term}</p>
+            <p className="translation-panel__headword">{state.term}</p>
             <p className="translation-panel__muted">Tłumaczę…</p>
           </>
         )}
 
         {state.status === 'error' && (
           <>
-            <p className="translation-panel__term">{state.term}</p>
+            <p className="translation-panel__headword">{state.term}</p>
             <p className="translation-panel__error">{state.message}</p>
           </>
         )}
 
         {state.status === 'ready' && (
           <>
-            <p className="translation-panel__term">{state.result.term}</p>
-            <div className="translation-panel__pl-row">
-              <p className="translation-panel__pl">{state.result.translation}</p>
-              <button
-                type="button"
-                className="translation-panel__speak"
-                onClick={() => speakEnglish(englishTerm)}
-                title="Wymowa angielska"
-                aria-label={`Odtwórz wymowę: ${englishTerm}`}
-              >
-                <span aria-hidden="true">▶</span> Wymowa
-              </button>
-            </div>
-
-            {onAddToStudy && (
-              <button
-                type="button"
-                className={`translation-panel__study${saved ? ' translation-panel__study--saved' : ''}`}
-                disabled={saved}
-                onClick={() => {
-                  onAddToStudy(state.result)
-                  setJustAdded(true)
-                }}
-              >
-                {saved ? '✓ W nauce' : '+ Do nauki'}
-              </button>
-            )}
-
-            {state.result.context && (
-              <div className="translation-panel__context">
+            <div className="translation-panel__top">
+              <p className="translation-panel__headword">
+                {state.result.headword ?? state.result.term}
+                {state.result.headword &&
+                  state.result.headword.toLowerCase() !==
+                    state.result.term.toLowerCase() && (
+                    <span className="translation-panel__form-hint">
+                      {' '}
+                      ← {state.result.term}
+                    </span>
+                  )}
+              </p>
+              <div className="translation-panel__actions">
                 <button
                   type="button"
-                  className="translation-panel__context-toggle"
-                  aria-expanded={contextOpen}
-                  onClick={openContext}
+                  className="translation-panel__icon-btn"
+                  onClick={() => speakEnglish(englishTerm)}
+                  title="Wymowa angielska"
+                  aria-label={`Odtwórz wymowę: ${englishTerm}`}
                 >
-                  <span>W kontekście</span>
-                  <span className="translation-panel__chevron" aria-hidden="true">
-                    {contextOpen ? '▾' : '▸'}
-                  </span>
+                  <span aria-hidden="true">▶</span>
                 </button>
-                {contextOpen && (
-                  <div className="translation-panel__context-body">
-                    <p className="translation-panel__context-en">
-                      {state.result.context}
-                    </p>
-                    {contextLoading && (
-                      <p className="translation-panel__muted">Tłumaczę zdanie…</p>
-                    )}
-                    {contextPl && (
-                      <p className="translation-panel__context-pl">{contextPl}</p>
-                    )}
-                  </div>
+                {onAddToStudy && (
+                  <button
+                    type="button"
+                    className={`translation-panel__icon-btn${saved ? ' translation-panel__icon-btn--saved' : ''}`}
+                    disabled={saved}
+                    title={saved ? 'Już w nauce' : 'Dodaj do nauki'}
+                    aria-label={saved ? 'Już w nauce' : 'Dodaj do nauki'}
+                    onClick={() => {
+                      onAddToStudy(state.result)
+                      setJustAdded(true)
+                    }}
+                  >
+                    <span aria-hidden="true">{saved ? '✓' : '+'}</span>
+                  </button>
                 )}
               </div>
-            )}
+            </div>
+
+            <p className="translation-panel__pl">{state.result.translation}</p>
+
             {state.result.explanation && (
-              <p className="translation-panel__expl">{state.result.explanation}</p>
+              <p className="translation-panel__expl">
+                {state.result.explanation}
+              </p>
             )}
-            {state.result.similar && state.result.similar.length > 0 && (
-              <div className="translation-panel__similar">
-                <span className="translation-panel__label">
-                  Podobne (w tym znaczeniu)
-                </span>
-                <ul>
-                  {state.result.similar.map((s) => (
-                    <li key={s}>{s}</li>
-                  ))}
-                </ul>
+
+            {state.result.example && (
+              <div className="translation-panel__example">
+                <p className="translation-panel__example-en">
+                  {highlightTerm(
+                    state.result.example.en,
+                    state.result.term,
+                    state.result.headword ?? '',
+                  )}
+                  <button
+                    type="button"
+                    className="translation-panel__example-speak"
+                    onClick={() => speakEnglish(state.result.example!.en)}
+                    title="Wymowa przykładu"
+                    aria-label="Odtwórz wymowę przykładu"
+                  >
+                    <span aria-hidden="true">▶</span>
+                  </button>
+                </p>
+                {state.result.example.pl ? (
+                  <p className="translation-panel__example-pl">
+                    {state.result.example.pl}
+                  </p>
+                ) : (
+                  <p className="translation-panel__muted">
+                    Nie udało się przetłumaczyć przykładu.
+                  </p>
+                )}
               </div>
             )}
           </>
