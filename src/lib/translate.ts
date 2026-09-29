@@ -197,27 +197,9 @@ function senseHintQuery(term: string, context?: string): string {
   return term
 }
 
-function pickGloss(
-  term: string,
-  directPl: string | null,
-  dict: LocalDictDebug,
-): string {
+function pickGloss(term: string, directPl: string | null): string {
   const direct = directPl ? cleanGloss(term, directPl) : ''
   if (direct && isAcceptableGloss(term, direct)) return direct
-
-  // Fallback: first Polish gloss from preferred / any local entry
-  const entries = dict.ok ? (dict.entries ?? []) : []
-  const ordered = [
-    ...entries.filter((e) => e.preferred),
-    ...entries.filter((e) => !e.preferred),
-  ]
-  for (const e of ordered) {
-    for (const pl of e.translations_pl) {
-      const cleaned = cleanGloss(term, pl)
-      if (cleaned && isAcceptableGloss(term, cleaned)) return cleaned
-    }
-  }
-
   throw new Error('Nie udało się przetłumaczyć. Spróbuj ponownie.')
 }
 
@@ -403,7 +385,7 @@ async function translateInternal(
   const guessedPos = hasSentence && sentence ? guessPos(term, sentence) : null
   const dict = rankLocalDictByPos(localDictRaw, guessedPos)
 
-  const translation = pickGloss(term, directPl, dict)
+  const translation = pickGloss(term, directPl)
   const headword =
     dict.ok && dict.lemma && dict.lemma.toLowerCase() !== term.toLowerCase()
       ? dict.lemma

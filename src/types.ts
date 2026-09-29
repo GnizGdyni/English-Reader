@@ -31,6 +31,14 @@ export type TranslationExample = {
   pl?: string | null
 }
 
+/** Viewport rect used to place translation popups near the text. */
+export type LookupAnchor = {
+  top: number
+  left: number
+  width: number
+  height: number
+}
+
 export type TranslationResult = {
   /** Word as clicked in the text (e.g. feet). */
   term: string
@@ -49,9 +57,14 @@ export type TranslationResult = {
 
 export type TranslationState =
   | { status: 'idle' }
-  | { status: 'loading'; term: string }
-  | { status: 'ready'; result: TranslationResult }
-  | { status: 'error'; term: string; message: string }
+  | { status: 'loading'; term: string; anchor?: LookupAnchor }
+  | { status: 'ready'; result: TranslationResult; anchor?: LookupAnchor }
+  | {
+      status: 'error'
+      term: string
+      message: string
+      anchor?: LookupAnchor
+    }
 
 /** Word saved for flashcard practice (persisted in localStorage). */
 export type StudyCard = {

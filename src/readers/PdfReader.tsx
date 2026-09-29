@@ -35,9 +35,16 @@ function isRenderCancelled(err: unknown): boolean {
   )
 }
 
+export type LookupAnchor = {
+  top: number
+  left: number
+  width: number
+  height: number
+}
+
 export type SentenceLookupPayload = {
   sentence: string
-  anchor: { top: number; left: number; width: number; height: number }
+  anchor: LookupAnchor
 }
 
 type Props = {
@@ -46,10 +53,21 @@ type Props = {
   swipeEnabled?: boolean
   initialPage?: number
   keepHighlight?: boolean
-  onLookup: (term: string, context?: string) => void
+  onLookup: (term: string, context?: string, anchor?: LookupAnchor) => void
   onSentenceLookup?: (payload: SentenceLookupPayload) => void
   onNavLabel: (label: string) => void
   onPageChange?: (page: number) => void
+}
+
+function anchorFromLayer(layer: HTMLElement): LookupAnchor | undefined {
+  const rect = getHighlightAnchorRect(layer)
+  if (!rect) return undefined
+  return {
+    top: rect.top,
+    left: rect.left,
+    width: rect.width,
+    height: rect.height,
+  }
 }
 
 export function PdfReader({
@@ -334,18 +352,30 @@ export function PdfReader({
 
       const selected = selectionLookup(layer)
       if (selected) {
-        highlightLookup(layer, selected)
-        onLookup(selected.term, selected.context)
+        const multi = /\s/.test(selected.term)
+        highlightLookup(
+          layer,
+          selected,
+          multi
+            ? 'lookup-highlight lookup-highlight--sentence'
+            : 'lookup-highlight',
+        )
+        const anchor = anchorFromLayer(layer)
+        if (multi && onSentenceLookup && anchor) {
+          onSentenceLookup({ sentence: selected.term, anchor })
+          return
+        }
+        onLookup(selected.term, selected.context, anchor)
         return
       }
 
       const hit = lookupAtPoint(layer, clientX, clientY)
       if (hit) {
         highlightLookup(layer, hit)
-        onLookup(hit.term, hit.context)
+        onLookup(hit.term, hit.context, anchorFromLayer(layer))
       }
     },
-    [onLookup, gripRange, clearGrips],
+    [onLookup, onSentenceLookup, gripRange, clearGrips],
   )
 
   const translateGrips = useCallback(() => {
@@ -356,10 +386,19 @@ export function PdfReader({
       clearGrips()
       return
     }
-    highlightLookup(layer, payload)
-    onLookup(payload.term, payload.context)
+    highlightLookup(
+      layer,
+      payload,
+      'lookup-highlight lookup-highlight--sentence',
+    )
+    const anchor = anchorFromLayer(layer)
     setGripRange(null)
-  }, [onLookup, gripRange, clearGrips])
+    if (onSentenceLookup && anchor) {
+      onSentenceLookup({ sentence: payload.term, anchor })
+      return
+    }
+    onLookup(payload.term, payload.context, anchor)
+  }, [onLookup, onSentenceLookup, gripRange, clearGrips])
 
   const openGripsAt = useCallback((clientX: number, clientY: number) => {
     const layer = textLayerRef.current

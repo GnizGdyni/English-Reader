@@ -19,7 +19,7 @@ import {
   syncStudyCardsToCloud,
 } from '../lib/cloudApi'
 import type { Theme } from '../lib/theme'
-import type { LoadedBook, StudyCard, TranslationResult, TranslationState } from '../types'
+import type { LoadedBook, StudyCard, TranslationResult, TranslationState, LookupAnchor } from '../types'
 import { TranslationPanel } from './TranslationPanel'
 import { SentencePopup, type SentencePopupState } from './SentencePopup'
 import { ThemeToggle } from './ThemeToggle'
@@ -128,46 +128,52 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
     [studyDeck, updateStudyDeck],
   )
 
-  const lookup = useCallback(async (term: string, context?: string) => {
-    if (!term || term.length > 120) return
+  const lookup = useCallback(
+    async (term: string, context?: string, anchor?: LookupAnchor) => {
+      if (!term || term.length > 120) return
 
-    const key = term.toLowerCase()
-    const now = Date.now()
-    if (
-      key === lastLookupRef.current.key &&
-      now - lastLookupRef.current.at < 600
-    ) {
-      return
-    }
-    lastLookupRef.current = { key, at: now }
+      const key = term.toLowerCase()
+      const now = Date.now()
+      if (
+        key === lastLookupRef.current.key &&
+        now - lastLookupRef.current.at < 600
+      ) {
+        return
+      }
+      lastLookupRef.current = { key, at: now }
 
-    setSentencePopup(null)
-    sentenceRequestId.current += 1
+      setSentencePopup(null)
+      sentenceRequestId.current += 1
 
-    const id = ++requestId.current
-    setTranslation((prev) => {
-      if (prev.status === 'loading' && prev.term === term) return prev
-      return { status: 'loading', term }
-    })
-
-    if (autoSpeakRef.current) {
-      speakEnglish(term)
-    }
-
-    try {
-      const result = await translate(term, context)
-      if (id !== requestId.current) return
-      setTranslation({ status: 'ready', result })
-    } catch (err) {
-      if (id !== requestId.current) return
-      setTranslation({
-        status: 'error',
-        term,
-        message:
-          err instanceof Error ? err.message : 'Błąd tłumaczenia.',
+      const id = ++requestId.current
+      setTranslation((prev) => {
+        if (prev.status === 'loading' && prev.term === term) {
+          return { ...prev, anchor: anchor ?? prev.anchor }
+        }
+        return { status: 'loading', term, anchor }
       })
-    }
-  }, [])
+
+      if (autoSpeakRef.current) {
+        speakEnglish(term)
+      }
+
+      try {
+        const result = await translate(term, context)
+        if (id !== requestId.current) return
+        setTranslation({ status: 'ready', result, anchor })
+      } catch (err) {
+        if (id !== requestId.current) return
+        setTranslation({
+          status: 'error',
+          term,
+          message:
+            err instanceof Error ? err.message : 'Błąd tłumaczenia.',
+          anchor,
+        })
+      }
+    },
+    [],
+  )
 
   const lookupSentence = useCallback(async (payload: SentenceLookupPayload) => {
     const sentence = payload.sentence.trim()

@@ -85,14 +85,14 @@ function lookup(query) {
 
     let wordRows = database
       .prepare(
-        `SELECT word, pos, gloss, ipa FROM words WHERE word = ? COLLATE NOCASE LIMIT 6`,
+        `SELECT word, pos, gloss FROM words WHERE word = ? COLLATE NOCASE LIMIT 6`,
       )
       .all(lemma)
 
     if (!wordRows.length && lemma !== q) {
       wordRows = database
         .prepare(
-          `SELECT word, pos, gloss, ipa FROM words WHERE word = ? COLLATE NOCASE LIMIT 6`,
+          `SELECT word, pos, gloss FROM words WHERE word = ? COLLATE NOCASE LIMIT 6`,
         )
         .all(q)
       lemma = q
@@ -100,22 +100,16 @@ function lookup(query) {
     }
 
     const exStmt = database.prepare(
-      `SELECT example FROM examples WHERE word = ? COLLATE NOCASE LIMIT 3`,
-    )
-    const plStmt = database.prepare(
-      `SELECT gloss_pl FROM translations_pl WHERE word = ? COLLATE NOCASE LIMIT 4`,
+      `SELECT example FROM examples WHERE word = ? COLLATE NOCASE LIMIT 1`,
     )
 
     const entries = wordRows.map((row) => {
       const examples = exStmt.all(row.word).map((r) => r.example)
-      const translations_pl = plStmt.all(row.word).map((r) => r.gloss_pl)
       return {
         word: row.word,
         pos: row.pos,
         gloss: row.gloss,
-        ipa: row.ipa,
         examples,
-        translations_pl,
       }
     })
 

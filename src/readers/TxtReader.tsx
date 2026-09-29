@@ -13,15 +13,26 @@ import {
   SelectionHandles,
   type GripRange,
 } from '../components/SelectionHandles'
-import type { SentenceLookupPayload } from './PdfReader'
+import type { SentenceLookupPayload, LookupAnchor } from './PdfReader'
 
 type Props = {
   file: File
   focusMode?: boolean
   keepHighlight?: boolean
-  onLookup: (term: string, context?: string) => void
+  onLookup: (term: string, context?: string, anchor?: LookupAnchor) => void
   onSentenceLookup?: (payload: SentenceLookupPayload) => void
   onNavLabel: (label: string) => void
+}
+
+function anchorFromRoot(root: HTMLElement): LookupAnchor | undefined {
+  const rect = getHighlightAnchorRect(root)
+  if (!rect) return undefined
+  return {
+    top: rect.top,
+    left: rect.left,
+    width: rect.width,
+    height: rect.height,
+  }
 }
 
 export function TxtReader({
@@ -91,8 +102,20 @@ export function TxtReader({
 
       const selected = selectionLookup(el)
       if (selected) {
-        highlightLookup(el, selected)
-        onLookup(selected.term, selected.context)
+        const multi = /\s/.test(selected.term)
+        highlightLookup(
+          el,
+          selected,
+          multi
+            ? 'lookup-highlight lookup-highlight--sentence'
+            : 'lookup-highlight',
+        )
+        const anchor = anchorFromRoot(el)
+        if (multi && onSentenceLookup && anchor) {
+          onSentenceLookup({ sentence: selected.term, anchor })
+          return
+        }
+        onLookup(selected.term, selected.context, anchor)
         return
       }
 
@@ -102,10 +125,10 @@ export function TxtReader({
       const hit = lookupAtPoint(el, clientX, clientY)
       if (hit) {
         highlightLookup(el, hit)
-        onLookup(hit.term, hit.context)
+        onLookup(hit.term, hit.context, anchorFromRoot(el))
       }
     },
-    [onLookup, gripRange, clearGrips],
+    [onLookup, onSentenceLookup, gripRange, clearGrips],
   )
 
   const translateGrips = useCallback(() => {
@@ -116,10 +139,19 @@ export function TxtReader({
       clearGrips()
       return
     }
-    highlightLookup(el, payload)
-    onLookup(payload.term, payload.context)
+    highlightLookup(
+      el,
+      payload,
+      'lookup-highlight lookup-highlight--sentence',
+    )
+    const anchor = anchorFromRoot(el)
     setGripRange(null)
-  }, [onLookup, gripRange, clearGrips])
+    if (onSentenceLookup && anchor) {
+      onSentenceLookup({ sentence: payload.term, anchor })
+      return
+    }
+    onLookup(payload.term, payload.context, anchor)
+  }, [onLookup, onSentenceLookup, gripRange, clearGrips])
 
   const openGripsAt = useCallback((clientX: number, clientY: number) => {
     const el = articleRef.current

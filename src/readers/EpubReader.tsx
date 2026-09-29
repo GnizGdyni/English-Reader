@@ -12,7 +12,7 @@ import {
 } from '../lib/selection'
 import { usePageSwipe } from '../hooks/usePageSwipe'
 import type { LookupPayload } from '../lib/selection'
-import type { SentenceLookupPayload } from './PdfReader'
+import type { SentenceLookupPayload, LookupAnchor } from './PdfReader'
 import {
   SelectionHandles,
   type GripRange,
@@ -25,7 +25,7 @@ type Props = {
   swipeEnabled?: boolean
   initialCfi?: string
   keepHighlight?: boolean
-  onLookup: (term: string, context?: string) => void
+  onLookup: (term: string, context?: string, anchor?: LookupAnchor) => void
   onSentenceLookup?: (payload: SentenceLookupPayload) => void
   onNavLabel: (label: string) => void
   onProgress?: (progress: { page?: number; cfi?: string }) => void
@@ -66,22 +66,32 @@ function applyEpubTheme(
   })
 }
 
-function emitLookup(
-  onLookup: (term: string, context?: string) => void,
-  doc: Document,
-  payload: LookupPayload | null,
-) {
-  if (!payload?.term) return
-  highlightLookup(doc, payload)
-  onLookup(payload.term, payload.context)
-}
-
 function iframeOffset(doc: Document): { top: number; left: number } {
   const win = doc.defaultView
   const frame = win?.frameElement as HTMLElement | null
   if (!frame) return { top: 0, left: 0 }
   const r = frame.getBoundingClientRect()
   return { top: r.top, left: r.left }
+}
+
+function emitLookup(
+  onLookup: (term: string, context?: string, anchor?: LookupAnchor) => void,
+  doc: Document,
+  payload: LookupPayload | null,
+) {
+  if (!payload?.term) return
+  highlightLookup(doc, payload)
+  const rect = getHighlightAnchorRect(doc)
+  const off = iframeOffset(doc)
+  const anchor = rect
+    ? {
+        top: rect.top + off.top,
+        left: rect.left + off.left,
+        width: rect.width,
+        height: rect.height,
+      }
+    : undefined
+  onLookup(payload.term, payload.context, anchor)
 }
 
 export function EpubReader({
@@ -468,9 +478,27 @@ export function EpubReader({
             clearGrips()
             return
           }
-          highlightLookup(body.ownerDocument, payload)
-          onLookup(payload.term, payload.context)
+          highlightLookup(
+            body.ownerDocument,
+            payload,
+            'lookup-highlight lookup-highlight--sentence',
+          )
+          const rect = getHighlightAnchorRect(body.ownerDocument)
+          const off = iframeOffset(body.ownerDocument)
           setGripRange(null)
+          if (onSentenceLookup && rect) {
+            onSentenceLookup({
+              sentence: payload.term,
+              anchor: {
+                top: rect.top + off.top,
+                left: rect.left + off.left,
+                width: rect.width,
+                height: rect.height,
+              },
+            })
+            return
+          }
+          emitLookup(onLookup, body.ownerDocument, payload)
         }}
         onDismiss={clearGrips}
       />

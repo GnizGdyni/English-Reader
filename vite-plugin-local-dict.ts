@@ -26,9 +26,7 @@ type DictHit = {
     word: string
     pos: string
     gloss: string | null
-    ipa: string | null
     examples: string[]
-    translations_pl: string[]
   }>
 }
 
@@ -104,19 +102,18 @@ export function localDictPlugin(): Plugin {
 
       let wordRows = database
         .prepare(
-          `SELECT word, pos, gloss, ipa FROM words WHERE word = ? COLLATE NOCASE LIMIT 6`,
+          `SELECT word, pos, gloss FROM words WHERE word = ? COLLATE NOCASE LIMIT 6`,
         )
         .all(lemma) as Array<{
         word: string
         pos: string
         gloss: string | null
-        ipa: string | null
       }>
 
       if (!wordRows.length && lemma !== q) {
         wordRows = database
           .prepare(
-            `SELECT word, pos, gloss, ipa FROM words WHERE word = ? COLLATE NOCASE LIMIT 6`,
+            `SELECT word, pos, gloss FROM words WHERE word = ? COLLATE NOCASE LIMIT 6`,
           )
           .all(q) as typeof wordRows
         lemma = q
@@ -124,26 +121,18 @@ export function localDictPlugin(): Plugin {
       }
 
       const exStmt = database.prepare(
-        `SELECT example FROM examples WHERE word = ? COLLATE NOCASE LIMIT 3`,
-      )
-      const plStmt = database.prepare(
-        `SELECT gloss_pl FROM translations_pl WHERE word = ? COLLATE NOCASE LIMIT 4`,
+        `SELECT example FROM examples WHERE word = ? COLLATE NOCASE LIMIT 1`,
       )
 
       const entries = wordRows.map((row) => {
         const examples = (
           exStmt.all(row.word) as Array<{ example: string }>
         ).map((r) => r.example)
-        const translations_pl = (
-          plStmt.all(row.word) as Array<{ gloss_pl: string }>
-        ).map((r) => r.gloss_pl)
         return {
           word: row.word,
           pos: row.pos,
           gloss: row.gloss,
-          ipa: row.ipa,
           examples,
-          translations_pl,
         }
       })
 

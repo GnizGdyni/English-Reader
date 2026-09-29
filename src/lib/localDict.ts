@@ -1,12 +1,12 @@
-/** Client-side local dictionary probe (Vite /api/local-dict). Fail-soft. */
+/** Dictionary lookup: Supabase RPC first, then optional Vite/Railway API. */
+
+import { getSupabase } from './supabase'
 
 export type LocalDictEntry = {
   word: string
   pos: string
   gloss: string | null
-  ipa: string | null
   examples: string[]
-  translations_pl: string[]
   /** True when POS matches sentence heuristic. */
   preferred?: boolean
 }
@@ -84,26 +84,29 @@ function sanitize(raw: string): string | null {
   return t
 }
 
-/**
- * Safe lookup against local / remote Kaikki SQLite API.
- * Dev: Vite `/api/local-dict`. Prod: `VITE_DICT_API_URL`.
- * Never throws.
- */
-export async function lookupLocalDict(term: string): Promise<LocalDictDebug> {
-  const q = sanitize(term)
-  if (!q) {
-    return { ok: false, query: term, reason: 'invalid_query' }
-  }
+async function lookupViaSupabase(q: string): Promise<LocalDictDebug | null> {
+  const sb = getSupabase()
+  if (!sb) return null
 
-  const base = (import.meta.env.VITE_DICT_API_URL as string | undefined)?.replace(
-    /\/$/,
-    '',
-  )
+  try {
+    const { data, error } = await sb.rpc('lookup_dict', { raw_q: q })
+    if (error || !data || typeof data !== 'object') {
+      return null
+    }
+    return data as LocalDictDebug
+  } catch {
+    return null
+  }
+}
+
+async function lookupViaHttp(q: string): Promise<LocalDictDebug> {
+  const base = (
+    import.meta.env.VITE_DICT_API_URL as string | undefined
+  )?.replace(/\/$/, '')
   const endpoint = base
     ? `${base}/api/local-dict?q=${encodeURIComponent(q)}`
     : `/api/local-dict?q=${encodeURIComponent(q)}`
 
-  // Remote free hosts may cold-start; local Vite is fast.
   const timeoutMs = base ? 12000 : 2500
 
   try {
@@ -127,4 +130,23 @@ export async function lookupLocalDict(term: string): Promise<LocalDictDebug> {
   } catch {
     return { ok: false, query: q, reason: 'unavailable' }
   }
+}
+
+/**
+ * Safe dictionary lookup. Prefer Supabase RPC; fall back to Vite/Railway API.
+ * Never throws.
+ */
+export async function lookupLocalDict(term: string): Promise<LocalDictDebug> {
+  const q = sanitize(term)
+  if (!q) {
+    return { ok: false, query: term, reason: 'invalid_query' }
+  }
+
+  const fromSb = await lookupViaSupabase(q)
+  if (fromSb?.ok) return fromSb
+  if (fromSb && fromSb.ok === false && fromSb.reason === 'invalid_query') {
+    return fromSb
+  }
+
+  return lookupViaHttp(q)
 }
