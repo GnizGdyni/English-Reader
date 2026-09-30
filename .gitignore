@@ -22,6 +22,12 @@ dict-api/data/*
 kaikki.org-dictionary-*.jsonl
 kaikki.org-dictionary-*.jsonl.gz
 
+# Junk / OS
+Thumbs.db
+desktop.ini
+Nowy dokument*.txt
+~$*
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

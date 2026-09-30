@@ -2,6 +2,10 @@
 
 Kod jest już w projekcie. Zrób te kroki w panelu Supabase i lokalnie.
 
+Po podstawowej konfiguracji (poniżej) słownik Kaikki: uruchom też  
+`supabase/dict-schema.sql`, potem opcjonalnie `npm run dict:to-supabase`  
+(patrz główne [README](./README.md)).
+
 ## 1. Projekt Supabase
 
 1. [supabase.com](https://supabase.com) → **New project**
