@@ -22,6 +22,7 @@ type Props = {
   onLookup: (term: string, context?: string, anchor?: LookupAnchor) => void
   onSentenceLookup?: (payload: SentenceLookupPayload) => void
   onNavLabel: (label: string) => void
+  onProgress?: (percent: number) => void
 }
 
 function anchorFromRoot(root: HTMLElement): LookupAnchor | undefined {
@@ -42,8 +43,12 @@ export function TxtReader({
   onLookup,
   onSentenceLookup,
   onNavLabel,
+  onProgress,
 }: Props) {
   const articleRef = useRef<HTMLElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const onProgressRef = useRef(onProgress)
+  onProgressRef.current = onProgress
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [ready, setReady] = useState(false)
@@ -79,6 +84,26 @@ export function TxtReader({
       cancelled = true
     }
   }, [file, onNavLabel])
+
+  useEffect(() => {
+    if (!ready || !onProgress) return
+    const root = scrollRef.current
+    if (!root) return
+
+    const report = () => {
+      const max = root.scrollHeight - root.clientHeight
+      if (max <= 0) {
+        onProgressRef.current?.(100)
+        return
+      }
+      const pct = Math.min(100, Math.round((root.scrollTop / max) * 100))
+      onProgressRef.current?.(pct)
+    }
+
+    report()
+    root.addEventListener('scroll', report, { passive: true })
+    return () => root.removeEventListener('scroll', report)
+  }, [ready, onProgress, file])
 
   useEffect(() => {
     if (!keepHighlight) {
@@ -199,8 +224,10 @@ export function TxtReader({
   })
 
   return (
-    <div className={`txt-reader${focusMode ? ' txt-reader--focus' : ''}`}>
-      {loading && <p className="reader-status">Ładowanie tekstu…</p>}
+    <div
+      ref={scrollRef}
+      className={`txt-reader${focusMode ? ' txt-reader--focus' : ''}`}
+    >      {loading && <p className="reader-status">Ładowanie tekstu…</p>}
       {error && <p className="error-banner">{error}</p>}
       <article
         ref={articleRef}

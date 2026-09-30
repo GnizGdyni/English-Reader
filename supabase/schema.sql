@@ -9,6 +9,10 @@ create table if not exists user_books (
   storage_path text not null,
   page int not null default 1,
   progress_cfi text,
+  reading_seconds int not null default 0,
+  total_pages int,
+  progress_percent int not null default 0
+    check (progress_percent >= 0 and progress_percent <= 100),
   created_at timestamptz not null default now()
 );
 
@@ -65,3 +69,27 @@ create policy "books: delete own"
     bucket_id = 'books'
     and auth.uid()::text = (storage.foldername(name))[1]
   );
+
+-- Czas czytania (bezpieczny increment tylko własnych książek)
+create or replace function public.increment_book_reading_time(
+  p_book_id uuid,
+  p_seconds int
+)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  if p_seconds is null or p_seconds <= 0 then
+    return;
+  end if;
+  update user_books
+  set reading_seconds = reading_seconds + p_seconds
+  where id = p_book_id
+    and user_id = auth.uid();
+end;
+$$;
+
+grant execute on function public.increment_book_reading_time(uuid, int)
+  to authenticated;

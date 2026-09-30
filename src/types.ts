@@ -17,6 +17,11 @@ export type SavedBook = {
   format: BookFormat
   page: number
   progressCfi?: string
+  /** Accumulated reading time for this cloud book (seconds). */
+  readingSeconds: number
+  totalPages?: number
+  /** 0–100, based on page / EPUB percentage. */
+  progressPercent: number
   createdAt: string
 }
 

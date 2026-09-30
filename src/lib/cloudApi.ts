@@ -15,6 +15,9 @@ type BookRow = {
   storage_path: string
   page: number
   progress_cfi: string | null
+  reading_seconds?: number | null
+  total_pages?: number | null
+  progress_percent?: number | null
   created_at: string
 }
 
@@ -36,6 +39,9 @@ function rowToSavedBook(row: BookRow): SavedBook {
     format: row.format,
     page: row.page,
     progressCfi: row.progress_cfi ?? undefined,
+    readingSeconds: Math.max(0, row.reading_seconds ?? 0),
+    totalPages: row.total_pages ?? undefined,
+    progressPercent: Math.min(100, Math.max(0, row.progress_percent ?? 0)),
     createdAt: row.created_at,
   }
 }
@@ -161,21 +167,73 @@ export async function openSavedBook(saved: SavedBook): Promise<LoadedBook> {
   }
 }
 
+export async function renameSavedBook(
+  bookId: string,
+  name: string,
+): Promise<SavedBook> {
+  const supabase = getSupabase()
+  if (!supabase) throw new Error('Supabase nie jest skonfigurowany.')
+
+  const trimmed = name.replace(/\s+/g, ' ').trim()
+  if (!trimmed) throw new Error('Nazwa nie może być pusta.')
+  if (trimmed.length > 120) throw new Error('Nazwa jest za długa (max 120 znaków).')
+
+  const { data, error } = await supabase
+    .from('user_books')
+    .update({ name: trimmed })
+    .eq('id', bookId)
+    .select('*')
+    .single()
+
+  if (error) throw new Error(error.message)
+  return rowToSavedBook(data as BookRow)
+}
+
 export async function saveReadingProgress(
   cloudId: string,
   page: number,
   progressCfi?: string,
+  extras?: { totalPages?: number; progressPercent?: number },
 ): Promise<void> {
   const supabase = getSupabase()
   if (!supabase) return
 
-  const payload: { page: number; progress_cfi?: string | null } = { page }
+  const payload: {
+    page: number
+    progress_cfi?: string | null
+    total_pages?: number
+    progress_percent?: number
+  } = { page }
   if (progressCfi !== undefined) {
     payload.progress_cfi = progressCfi || null
+  }
+  if (extras?.totalPages != null && extras.totalPages > 0) {
+    payload.total_pages = extras.totalPages
+  }
+  if (extras?.progressPercent != null) {
+    payload.progress_percent = Math.min(
+      100,
+      Math.max(0, Math.round(extras.progressPercent)),
+    )
   }
 
   const { error } = await supabase.from('user_books').update(payload).eq('id', cloudId)
   if (error) console.warn('saveReadingProgress:', error.message)
+}
+
+/** Add seconds to cloud book reading timer (own books only). */
+export async function addReadingTime(
+  cloudId: string,
+  seconds: number,
+): Promise<void> {
+  const supabase = getSupabase()
+  if (!supabase || seconds <= 0) return
+
+  const { error } = await supabase.rpc('increment_book_reading_time', {
+    p_book_id: cloudId,
+    p_seconds: Math.floor(seconds),
+  })
+  if (error) console.warn('addReadingTime:', error.message)
 }
 
 export async function fetchStudyCardsFromCloud(): Promise<StudyCard[]> {

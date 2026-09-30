@@ -17,6 +17,7 @@ import {
   fetchStudyCardsFromCloud,
   saveReadingProgress,
   syncStudyCardsToCloud,
+  addReadingTime,
 } from '../lib/cloudApi'
 import type { Theme } from '../lib/theme'
 import type { LoadedBook, StudyCard, TranslationResult, TranslationState, LookupAnchor } from '../types'
@@ -93,16 +94,59 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
   )
 
   const queueProgressSave = useCallback(
-    (page: number, cfi?: string) => {
+    (
+      page: number,
+      cfi?: string,
+      extras?: { totalPages?: number; progressPercent?: number },
+    ) => {
       if (!cloudSync || !book.cloudId) return
       lastProgressRef.current = { page, cfi }
       if (progressTimerRef.current) clearTimeout(progressTimerRef.current)
       progressTimerRef.current = setTimeout(() => {
-        saveReadingProgress(book.cloudId!, page, cfi)
+        saveReadingProgress(book.cloudId!, page, cfi, extras)
       }, 1500)
     },
     [book.cloudId, cloudSync],
   )
+
+  // Reading time — only cloud (own) books, while tab visible
+  useEffect(() => {
+    if (!cloudSync || !book.cloudId) return
+    const cloudId = book.cloudId
+    let pending = 0
+    let last = Date.now()
+
+    const flush = () => {
+      if (pending <= 0) return
+      const add = pending
+      pending = 0
+      void addReadingTime(cloudId, add)
+    }
+
+    const tick = () => {
+      const now = Date.now()
+      if (document.visibilityState === 'visible') {
+        pending += Math.floor((now - last) / 1000)
+      }
+      last = now
+      if (pending >= 20) flush()
+    }
+
+    const onVis = () => {
+      last = Date.now()
+    }
+
+    const interval = window.setInterval(tick, 5000)
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVis)
+      if (document.visibilityState === 'visible') {
+        pending += Math.floor((Date.now() - last) / 1000)
+      }
+      flush()
+    }
+  }, [cloudSync, book.cloudId])
 
   useEffect(() => {
     return () => {
@@ -264,16 +308,29 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
   }, [clearAllLookups])
 
   const handlePdfPageChange = useCallback(
-    (page: number) => {
-      queueProgressSave(page)
+    (page: number, totalPages: number) => {
+      const progressPercent =
+        totalPages > 0
+          ? Math.min(100, Math.round((page / totalPages) * 100))
+          : undefined
+      queueProgressSave(page, undefined, { totalPages, progressPercent })
     },
     [queueProgressSave],
   )
 
   const handleEpubProgress = useCallback(
-    (progress: { page?: number; cfi?: string }) => {
+    (progress: { page?: number; cfi?: string; percent?: number }) => {
       const page = progress.page ?? lastProgressRef.current.page
-      queueProgressSave(page, progress.cfi)
+      queueProgressSave(page, progress.cfi, {
+        progressPercent: progress.percent,
+      })
+    },
+    [queueProgressSave],
+  )
+
+  const handleTxtProgress = useCallback(
+    (percent: number) => {
+      queueProgressSave(1, undefined, { progressPercent: percent })
     },
     [queueProgressSave],
   )
@@ -408,9 +465,9 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
                 onLookup={lookup}
                 onSentenceLookup={lookupSentence}
                 onNavLabel={setNavLabel}
+                onProgress={cloudSync ? handleTxtProgress : undefined}
               />
-            )}
-          </div>
+            )}          </div>
         </ZoomPane>
       </div>
 

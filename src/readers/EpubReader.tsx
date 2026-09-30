@@ -28,7 +28,11 @@ type Props = {
   onLookup: (term: string, context?: string, anchor?: LookupAnchor) => void
   onSentenceLookup?: (payload: SentenceLookupPayload) => void
   onNavLabel: (label: string) => void
-  onProgress?: (progress: { page?: number; cfi?: string }) => void
+  onProgress?: (progress: {
+    page?: number
+    cfi?: string
+    percent?: number
+  }) => void
 }
 
 const EPUB_HIGHLIGHT_CSS = `
@@ -372,12 +376,22 @@ export function EpubReader({
 
     rendition.on('selected', handleSelected)
 
-    rendition.on('relocated', (location: { start?: { cfi?: string; displayed?: { page?: number } } }) => {
+    rendition.on('relocated', (location: {
+      start?: { cfi?: string; displayed?: { page?: number }; percentage?: number }
+      percentage?: number
+    }) => {
       const cfi = location?.start?.cfi
       const pageNum = location?.start?.displayed?.page
+      const rawPct =
+        location?.start?.percentage ?? location?.percentage ?? undefined
+      const percent =
+        typeof rawPct === 'number' && Number.isFinite(rawPct)
+          ? Math.min(100, Math.max(0, Math.round(rawPct * 100)))
+          : undefined
       onProgressRef.current?.({
         cfi,
         page: pageNum && pageNum > 0 ? pageNum : undefined,
+        percent,
       })
     })
 

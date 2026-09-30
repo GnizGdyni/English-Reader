@@ -56,7 +56,7 @@ type Props = {
   onLookup: (term: string, context?: string, anchor?: LookupAnchor) => void
   onSentenceLookup?: (payload: SentenceLookupPayload) => void
   onNavLabel: (label: string) => void
-  onPageChange?: (page: number) => void
+  onPageChange?: (page: number, totalPages: number) => void
 }
 
 function anchorFromLayer(layer: HTMLElement): LookupAnchor | undefined {
@@ -170,7 +170,7 @@ export function PdfReader({
 
   useEffect(() => {
     onNavLabel(pageCount ? `Strona ${page} / ${pageCount}` : '')
-    onPageChange?.(page)
+    if (pageCount > 0) onPageChange?.(page, pageCount)
   }, [page, pageCount, onNavLabel, onPageChange])
 
   useEffect(() => {
