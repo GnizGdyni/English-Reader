@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react'
 import {
   lookupAtPoint,
   selectionLookup,
@@ -14,6 +21,7 @@ import {
   type GripRange,
 } from '../components/SelectionHandles'
 import type { SentenceLookupPayload, LookupAnchor } from './PdfReader'
+import type { ReaderNavHandle, ReaderNavSnapshot } from '../types'
 
 type Props = {
   file: File
@@ -23,6 +31,7 @@ type Props = {
   onSentenceLookup?: (payload: SentenceLookupPayload) => void
   onNavLabel: (label: string) => void
   onProgress?: (percent: number) => void
+  onNavState?: (state: ReaderNavSnapshot) => void
 }
 
 function anchorFromRoot(root: HTMLElement): LookupAnchor | undefined {
@@ -36,23 +45,72 @@ function anchorFromRoot(root: HTMLElement): LookupAnchor | undefined {
   }
 }
 
-export function TxtReader({
-  file,
-  focusMode = false,
-  keepHighlight = false,
-  onLookup,
-  onSentenceLookup,
-  onNavLabel,
-  onProgress,
-}: Props) {
+export const TxtReader = forwardRef<ReaderNavHandle, Props>(function TxtReader(
+  {
+    file,
+    focusMode = false,
+    keepHighlight = false,
+    onLookup,
+    onSentenceLookup,
+    onNavLabel,
+    onProgress,
+    onNavState,
+  },
+  ref,
+) {
   const articleRef = useRef<HTMLElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const onProgressRef = useRef(onProgress)
   onProgressRef.current = onProgress
+  const onNavStateRef = useRef(onNavState)
+  onNavStateRef.current = onNavState
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [ready, setReady] = useState(false)
   const [gripRange, setGripRange] = useState<GripRange | null>(null)
+
+  const reportScroll = useCallback(() => {
+    const root = scrollRef.current
+    if (!root) return
+    const max = root.scrollHeight - root.clientHeight
+    const percent =
+      max <= 0 ? 100 : Math.min(100, Math.round((root.scrollTop / max) * 100))
+    onProgressRef.current?.(percent)
+    onNavStateRef.current?.({
+      page: 1,
+      totalPages: null,
+      percent,
+      canPrev: root.scrollTop > 0,
+      canNext: max > 0 && root.scrollTop < max - 1,
+    })
+  }, [])
+
+  const goPrev = useCallback(() => {
+    const root = scrollRef.current
+    if (!root) return
+    root.scrollBy({ top: -Math.max(120, root.clientHeight * 0.85), behavior: 'smooth' })
+  }, [])
+
+  const goNext = useCallback(() => {
+    const root = scrollRef.current
+    if (!root) return
+    root.scrollBy({ top: Math.max(120, root.clientHeight * 0.85), behavior: 'smooth' })
+  }, [])
+
+  const seekPercent = useCallback((percent: number) => {
+    const root = scrollRef.current
+    if (!root) return
+    const max = root.scrollHeight - root.clientHeight
+    if (max <= 0) return
+    root.scrollTop = (Math.min(100, Math.max(0, percent)) / 100) * max
+    reportScroll()
+  }, [reportScroll])
+
+  useImperativeHandle(
+    ref,
+    () => ({ goPrev, goNext, seekPercent }),
+    [goPrev, goNext, seekPercent],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -86,24 +144,13 @@ export function TxtReader({
   }, [file, onNavLabel])
 
   useEffect(() => {
-    if (!ready || !onProgress) return
+    if (!ready) return
     const root = scrollRef.current
     if (!root) return
-
-    const report = () => {
-      const max = root.scrollHeight - root.clientHeight
-      if (max <= 0) {
-        onProgressRef.current?.(100)
-        return
-      }
-      const pct = Math.min(100, Math.round((root.scrollTop / max) * 100))
-      onProgressRef.current?.(pct)
-    }
-
-    report()
-    root.addEventListener('scroll', report, { passive: true })
-    return () => root.removeEventListener('scroll', report)
-  }, [ready, onProgress, file])
+    reportScroll()
+    root.addEventListener('scroll', reportScroll, { passive: true })
+    return () => root.removeEventListener('scroll', reportScroll)
+  }, [ready, reportScroll, file])
 
   useEffect(() => {
     if (!keepHighlight) {
@@ -249,4 +296,4 @@ export function TxtReader({
       />
     </div>
   )
-}
+})

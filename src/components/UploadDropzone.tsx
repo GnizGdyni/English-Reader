@@ -77,46 +77,55 @@ export function UploadDropzone({ onLoad }: Props) {
         </p>
       </header>
 
-      <div
-        className={`dropzone${dragging ? ' dropzone--active' : ''}`}
-        onDragEnter={(e) => {
-          e.preventDefault()
-          setDragging(true)
-        }}
-        onDragOver={(e) => e.preventDefault()}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-        onClick={() => inputRef.current?.click()}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
+      <div className="home-actions">
+        <div
+          className={`dropzone${dragging ? ' dropzone--active' : ''}`}
+          onDragEnter={(e) => {
             e.preventDefault()
-            inputRef.current?.click()
-          }
-        }}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept={ACCEPT_ATTR}
-          hidden
-          onChange={(e) => handleFile(e.target.files?.[0])}
-        />
-        <span className="dropzone-title">Upuść plik lub kliknij, by wybrać</span>
-        <span className="dropzone-hint">EPUB · PDF · TXT</span>
-      </div>
+            setDragging(true)
+          }}
+          onDragOver={(e) => e.preventDefault()}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          onClick={() => inputRef.current?.click()}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              inputRef.current?.click()
+            }
+          }}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept={ACCEPT_ATTR}
+            hidden
+            onChange={(e) => handleFile(e.target.files?.[0])}
+          />
+          <span className="dropzone-title">Upuść plik lub kliknij, by wybrać</span>
+          <span className="dropzone-hint">EPUB · PDF · TXT</span>
+        </div>
 
-      <button
-        type="button"
-        className="sample-book"
-        onClick={loadSample}
-        disabled={loadingSample}
-      >
-        {loadingSample
-          ? 'Ładowanie…'
-          : 'Otwórz książkę testową — Adventures of Huckleberry Finn'}
-      </button>
+        <button
+          type="button"
+          className="sample-book"
+          onClick={loadSample}
+          disabled={loadingSample}
+        >
+          {loadingSample ? (
+            <span className="sample-book__action">Ładowanie…</span>
+          ) : (
+            <>
+              <span className="sample-book__action">Otwórz książkę testową</span>
+              <span className="sample-book__title">
+                Adventures of Huckleberry Finn
+              </span>
+            </>
+          )}
+        </button>
+      </div>
 
       {error && <p className="error-banner">{error}</p>}
     </div>

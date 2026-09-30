@@ -30,6 +30,21 @@ export type ReadingProgress = {
   cfi?: string
 }
 
+/** Live navigation snapshot for the reader chrome (mobile dock / desktop). */
+export type ReaderNavSnapshot = {
+  page: number
+  totalPages: number | null
+  percent: number
+  canPrev: boolean
+  canNext: boolean
+}
+
+export type ReaderNavHandle = {
+  goPrev: () => void
+  goNext: () => void
+  seekPercent: (percent: number) => void
+}
+
 export type TranslationExample = {
   en: string
   /** Polish translation of the example; may be missing if lookup failed. */

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react'
 import {
   getDocument,
   TextLayer,
@@ -26,6 +33,7 @@ import {
   SelectionHandles,
   type GripRange,
 } from '../components/SelectionHandles'
+import type { ReaderNavHandle, ReaderNavSnapshot } from '../types'
 import './pdf-text-layer.css'
 
 function isRenderCancelled(err: unknown): boolean {
@@ -57,6 +65,7 @@ type Props = {
   onSentenceLookup?: (payload: SentenceLookupPayload) => void
   onNavLabel: (label: string) => void
   onPageChange?: (page: number, totalPages: number) => void
+  onNavState?: (state: ReaderNavSnapshot) => void
 }
 
 function anchorFromLayer(layer: HTMLElement): LookupAnchor | undefined {
@@ -70,17 +79,21 @@ function anchorFromLayer(layer: HTMLElement): LookupAnchor | undefined {
   }
 }
 
-export function PdfReader({
-  url,
-  focusMode = false,
-  swipeEnabled = true,
-  initialPage = 1,
-  keepHighlight = false,
-  onLookup,
-  onSentenceLookup,
-  onNavLabel,
-  onPageChange,
-}: Props) {
+export const PdfReader = forwardRef<ReaderNavHandle, Props>(function PdfReader(
+  {
+    url,
+    focusMode = false,
+    swipeEnabled = true,
+    initialPage = 1,
+    keepHighlight = false,
+    onLookup,
+    onSentenceLookup,
+    onNavLabel,
+    onPageChange,
+    onNavState,
+  },
+  ref,
+) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const textLayerRef = useRef<HTMLDivElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -94,18 +107,87 @@ export function PdfReader({
   const [loading, setLoading] = useState(true)
   const [layoutKey, setLayoutKey] = useState(0)
   const [gripRange, setGripRange] = useState<GripRange | null>(null)
+  const [pageTurn, setPageTurn] = useState<{
+    src: string
+    dir: 'forward' | 'back'
+    width: number
+    height: number
+  } | null>(null)
 
   const initialPageRef = useRef(initialPage)
   initialPageRef.current = initialPage
+  const pageRef = useRef(page)
+  pageRef.current = page
+  const turningRef = useRef(false)
 
-  const goPrev = useCallback(() => {
-    setPage((p) => Math.max(1, p - 1))
+  const finishPageTurn = useCallback(() => {
+    setPageTurn(null)
+    turningRef.current = false
   }, [])
 
-  const goNext = useCallback(() => {
-    setPage((p) => Math.min(pageCount || p, p + 1))
-  }, [pageCount])
+  const turnToPage = useCallback(
+    (nextPage: number, dir: 'forward' | 'back') => {
+      if (turningRef.current) return
+      const current = pageRef.current
+      if (nextPage === current) return
+      if (nextPage < 1) return
+      if (pageCount > 0 && nextPage > pageCount) return
 
+      const reduceMotion = window.matchMedia(
+        '(prefers-reduced-motion: reduce)',
+      ).matches
+      const canvas = canvasRef.current
+      const pageEl = wrapRef.current?.querySelector(
+        '.pdf-page',
+      ) as HTMLElement | null
+
+      if (!reduceMotion && canvas && canvas.width > 0) {
+        try {
+          const src = canvas.toDataURL('image/jpeg', 0.82)
+          const width = pageEl?.offsetWidth || canvas.clientWidth || canvas.width
+          const height =
+            pageEl?.offsetHeight || canvas.clientHeight || canvas.height
+          turningRef.current = true
+          setPageTurn({ src, dir, width, height })
+        } catch {
+          /* ignore capture failures */
+        }
+      }
+
+      setPage(nextPage)
+    },
+    [pageCount],
+  )
+
+  const goPrev = useCallback(() => {
+    turnToPage(pageRef.current - 1, 'back')
+  }, [turnToPage])
+
+  const goNext = useCallback(() => {
+    turnToPage(pageRef.current + 1, 'forward')
+  }, [turnToPage])
+
+  const seekPercent = useCallback(
+    (percent: number) => {
+      if (pageCount <= 0) return
+      const clamped = Math.min(100, Math.max(0, percent))
+      const next = Math.min(
+        pageCount,
+        Math.max(1, Math.round((clamped / 100) * pageCount) || 1),
+      )
+      // Jump without flip animation (scrubbing)
+      turningRef.current = false
+      setPageTurn(null)
+      setPage(next)
+    },
+    [pageCount],
+  )
+
+  useImperativeHandle(
+    ref,
+    () => ({ goPrev, goNext, seekPercent }),
+    [goPrev, goNext, seekPercent],
+  )
   const cancelPageRender = useCallback(() => {
     activeTextLayerRef.current?.cancel()
     activeTextLayerRef.current = null
@@ -116,8 +198,14 @@ export function PdfReader({
   usePageSwipe(wrapRef, {
     onPrev: goPrev,
     onNext: goNext,
-    enabled: pageCount > 0 && swipeEnabled,
+    enabled: pageCount > 0 && swipeEnabled && !pageTurn,
   })
+
+  useEffect(() => {
+    if (!pageTurn) return
+    const t = window.setTimeout(finishPageTurn, 700)
+    return () => window.clearTimeout(t)
+  }, [pageTurn, finishPageTurn])
 
   useEffect(() => {
     let cancelled = false
@@ -171,7 +259,18 @@ export function PdfReader({
   useEffect(() => {
     onNavLabel(pageCount ? `Strona ${page} / ${pageCount}` : '')
     if (pageCount > 0) onPageChange?.(page, pageCount)
-  }, [page, pageCount, onNavLabel, onPageChange])
+    const percent =
+      pageCount > 0
+        ? Math.min(100, Math.round((page / pageCount) * 100))
+        : 0
+    onNavState?.({
+      page,
+      totalPages: pageCount > 0 ? pageCount : null,
+      percent,
+      canPrev: page > 1,
+      canNext: pageCount > 0 && page < pageCount,
+    })
+  }, [page, pageCount, onNavLabel, onPageChange, onNavState])
 
   useEffect(() => {
     const wrap = wrapRef.current
@@ -217,8 +316,9 @@ export function PdfReader({
       const wrap = wrapRef.current
       const containerWidth = wrap?.clientWidth ?? 720
       const containerHeight = wrap?.clientHeight ?? 900
-      const padX = focusMode ? 4 : 12
-      const padY = focusMode ? 4 : 10
+      const isMobile = window.matchMedia('(max-width: 899px)').matches
+      const padX = isMobile ? 0 : focusMode ? 4 : 12
+      const padY = isMobile ? 0 : focusMode ? 4 : 10
 
       const contentW = contentBox
         ? contentBox.maxX - contentBox.minX
@@ -474,18 +574,38 @@ export function PdfReader({
 
       <div className="pdf-stage">
         <div className="pdf-wrap" ref={wrapRef}>
-          <div className="pdf-page">
-            <canvas ref={canvasRef} />
-            <div
-              ref={textLayerRef}
-              className="textLayer"
-              onPointerDown={press.onPointerDown}
-              onPointerMove={press.onPointerMove}
-              onPointerUp={press.onPointerUp}
-              onPointerCancel={press.onPointerCancel}
-              onDoubleClick={press.onDoubleClick}
-              onContextMenu={(e) => e.preventDefault()}
-            />
+          <div
+            className={`pdf-flip${pageTurn ? ` pdf-flip--${pageTurn.dir}` : ''}`}
+          >
+            <div className="pdf-page">
+              <canvas ref={canvasRef} />
+              <div
+                ref={textLayerRef}
+                className="textLayer"
+                onPointerDown={press.onPointerDown}
+                onPointerMove={press.onPointerMove}
+                onPointerUp={press.onPointerUp}
+                onPointerCancel={press.onPointerCancel}
+                onDoubleClick={press.onDoubleClick}
+                onContextMenu={(e) => e.preventDefault()}
+              />
+            </div>
+            {pageTurn && (
+              <div
+                className="pdf-flip__sheet"
+                style={{
+                  width: pageTurn.width,
+                  height: pageTurn.height,
+                }}
+                onAnimationEnd={finishPageTurn}
+                aria-hidden
+              >
+                <div
+                  className="pdf-flip__face"
+                  style={{ backgroundImage: `url(${pageTurn.src})` }}
+                />
+              </div>
+            )}
           </div>
         </div>
 
@@ -493,23 +613,20 @@ export function PdfReader({
           <button
             type="button"
             className="reader-nav__prev"
-            disabled={page <= 1}
+            disabled={page <= 1 || Boolean(pageTurn)}
             onClick={goPrev}
             aria-label="Poprzednia strona"
           >
-            ←
+            «
           </button>
-          <span className="reader-nav__page">
-            {pageCount ? `${page} / ${pageCount}` : '—'}
-          </span>
           <button
             type="button"
             className="reader-nav__next"
-            disabled={!pageCount || page >= pageCount}
+            disabled={!pageCount || page >= pageCount || Boolean(pageTurn)}
             onClick={goNext}
             aria-label="Następna strona"
           >
-            →
+            »
           </button>
         </nav>
       </div>
@@ -523,4 +640,4 @@ export function PdfReader({
       />
     </div>
   )
-}
+})
