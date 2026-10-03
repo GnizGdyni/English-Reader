@@ -7,6 +7,7 @@ Aplikacja do nauki angielskiego **przez czytanie** — EPUB, PDF i TXT z natychm
 **Live demo:** [english-reader-eight.vercel.app](https://english-reader-eight.vercel.app/)
 
 ![Ekran główny English Reader](docs/screenshots/home.png)
+<img src="docs/screenshots/word-lookup.png" alt="Tłumaczenie słowa" width="48%" />
 
 ## Demo w 30 sekund
 
@@ -14,10 +15,9 @@ Aplikacja do nauki angielskiego **przez czytanie** — EPUB, PDF i TXT z natychm
 2. Kliknij **Otwórz książkę testową** (Huck Finn) — bez konta
 3. Kliknij słowo → popup ze znaczeniem · zaznacz zdanie → tłumaczenie
 
-<p>
-  <img src="docs/screenshots/word-lookup.png" alt="Tłumaczenie słowa" width="48%" />
-  <img src="docs/screenshots/sentence-translate.png" alt="Tłumaczenie zdania" width="48%" />
-</p>
+
+<img src="docs/screenshots/sentence-translate.png" alt="Tłumaczenie zdania" width="48%" />
+
 
 ![Widok mobilny](docs/screenshots/mobile.png)
 
