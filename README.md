@@ -6,50 +6,27 @@ Aplikacja do nauki angielskiego **przez czytanie** — EPUB, PDF i TXT z natychm
 
 **Live demo:** [english-reader-eight.vercel.app](https://english-reader-eight.vercel.app/)
 
-<<<<<<< HEAD
-=======
-![Ekran główny English Reader](docs/screenshots/home.png)
-<img src="docs/screenshots/word-lookup.png" alt="Tłumaczenie słowa" width="48%" />
-
->>>>>>> 854410c9bd7c8c728c9bbb9072d9f398efc13520
 ## Demo w 30 sekund
 
 1. Otwórz [live demo](https://english-reader-eight.vercel.app/)
 2. Kliknij **Otwórz książkę testową** (Huck Finn) — bez konta
 3. Kliknij słowo → popup ze znaczeniem · zaznacz zdanie → tłumaczenie
 
-<<<<<<< HEAD
 ## Screenshots
 
-<table>
-  <tr>
-    <td align="center" valign="top">
-      <strong>Home</strong><br />
-      <img src="./docs/screenshots/home.png" alt="Ekran główny English Reader" />
-    </td>
-    <td align="center" valign="top">
-      <strong>Desktop — słowo</strong><br />
-      <img src="./docs/screenshots/word-lookup.png" alt="Tłumaczenie słowa" />
-    </td>
-  </tr>
-  <tr>
-    <td align="center" valign="top">
-      <strong>Mobile — dock</strong><br />
-      <img src="./docs/screenshots/mobile.png" alt="Widok mobilny" width="280" />
-    </td>
-    <td align="center" valign="top">
-      <strong>Mobile — zdanie</strong><br />
-      <img src="./docs/screenshots/sentence-translate.png" alt="Tłumaczenie zdania" width="280" />
-    </td>
-  </tr>
-</table>
-=======
-<p>
-  <img src="docs/screenshots/sentence-translate.png" alt="Tłumaczenie zdania" />
-  <img src="docs/screenshots/mobile.png" alt="Tłumaczenie zdania" />
-</p>
+**Home**
 
->>>>>>> 854410c9bd7c8c728c9bbb9072d9f398efc13520
+![Ekran główny](docs/screenshots/home.png)
+
+**Desktop — tłumaczenie słowa**
+
+![Tłumaczenie słowa](docs/screenshots/word-lookup.png)
+
+**Mobile**
+
+| Dock | Zdanie |
+| :---: | :---: |
+| ![Widok mobilny](docs/screenshots/mobile.png) | ![Tłumaczenie zdania](docs/screenshots/sentence-translate.png) |
 
 ## Funkcje
 
