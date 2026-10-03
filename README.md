@@ -4,7 +4,24 @@ Aplikacja do nauki angielskiego **przez czytanie** — EPUB, PDF i TXT z natychm
 
 > Kliknij słowo → zobacz znaczenie w kontekście. Zaznacz frazę / zdanie → pełne tłumaczenie. Zapisz do nauki.
 
-## Demo / funkcje
+**Live demo:** [english-reader-eight.vercel.app](https://english-reader-eight.vercel.app/)
+
+![Ekran główny English Reader](docs/screenshots/home.png)
+
+## Demo w 30 sekund
+
+1. Otwórz [live demo](https://english-reader-eight.vercel.app/)
+2. Kliknij **Otwórz książkę testową** (Huck Finn) — bez konta
+3. Kliknij słowo → popup ze znaczeniem · zaznacz zdanie → tłumaczenie
+
+<p>
+  <img src="docs/screenshots/word-lookup.png" alt="Tłumaczenie słowa" width="48%" />
+  <img src="docs/screenshots/sentence-translate.png" alt="Tłumaczenie zdania" width="48%" />
+</p>
+
+![Widok mobilny](docs/screenshots/mobile.png)
+
+## Funkcje
 
 - **Czytnik**: EPUB · PDF (z cropem marginesów) · TXT
 - **Tłumaczenie słowa**: popup przy tekście (hasło, gloss, przykład EN+PL)
@@ -87,4 +104,4 @@ npm run dict:to-supabase # SQLite → Postgres
 
 ## Licencja
 
-Projekt prywatny / portfolio — używaj kodu jako referencji własnej pracy.
+[MIT](./LICENSE) © 2026 GnizGdyni
