@@ -15,11 +15,11 @@ Aplikacja do nauki angielskiego **przez czytanie** — EPUB, PDF i TXT z natychm
 2. Kliknij **Otwórz książkę testową** (Huck Finn) — bez konta
 3. Kliknij słowo → popup ze znaczeniem · zaznacz zdanie → tłumaczenie
 
+<p>
+  <img src="docs/screenshots/sentence-translate.png" alt="Tłumaczenie zdania" />
+  <img src="docs/screenshots/mobile.png" alt="Tłumaczenie zdania" />
+</p>
 
-<img src="docs/screenshots/sentence-translate.png" alt="Tłumaczenie zdania" width="48%" />
-
-
-![Widok mobilny](docs/screenshots/mobile.png)
 
 ## Funkcje
 
