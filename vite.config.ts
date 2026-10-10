@@ -6,7 +6,7 @@ import { localDictPlugin } from './vite-plugin-local-dict.ts'
 export default defineConfig({
   plugins: [react(), localDictPlugin()],
   optimizeDeps: {
-    include: ['pdfjs-dist/legacy/build/pdf.mjs'],
+    include: ['pdfjs-dist/legacy/build/pdf.mjs', 'epubjs', 'jszip'],
   },
   worker: {
     format: 'es',

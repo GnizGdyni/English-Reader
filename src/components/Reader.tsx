@@ -8,6 +8,11 @@ import {
 } from '../lib/speech'
 import { loadFocusMode, saveFocusMode } from '../lib/focusMode'
 import {
+  loadEpubTypography,
+  saveEpubTypography,
+  type EpubTypography,
+} from '../lib/epubTypography'
+import {
   addStudyCard,
   hasStudyCard,
   loadStudyDeck,
@@ -35,6 +40,7 @@ import { SentencePopup, type SentencePopupState } from './SentencePopup'
 import { ZoomPane } from './ZoomPane'
 import { Flashcards } from './Flashcards'
 import { ReaderDock } from './ReaderDock'
+import { EpubTypographyControls } from './EpubTypographyControls'
 import { EpubReader } from '../readers/EpubReader'
 import { PdfReader, type SentenceLookupPayload } from '../readers/PdfReader'
 import { TxtReader } from '../readers/TxtReader'
@@ -61,7 +67,6 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
   })
   const [navLabel, setNavLabel] = useState('')
   const [navState, setNavState] = useState<ReaderNavSnapshot>(EMPTY_NAV)
-  const [dockExpanded, setDockExpanded] = useState(false)
   const [chromeVisible, setChromeVisible] = useState(true)
   const [isMobile, setIsMobile] = useState(
     () =>
@@ -70,6 +75,7 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
   )
   const [autoSpeak, setAutoSpeak] = useState(loadAutoSpeak)
   const [focusMode, setFocusMode] = useState(loadFocusMode)
+  const [epubTypography, setEpubTypography] = useState(loadEpubTypography)
   const [zoomScale, setZoomScale] = useState(1)
   const [studyDeck, setStudyDeck] = useState<StudyCard[]>(loadStudyDeck)
   const [studyOpen, setStudyOpen] = useState(false)
@@ -100,7 +106,6 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
 
   useEffect(() => {
     setNavState(EMPTY_NAV)
-    setDockExpanded(false)
     setChromeVisible(true)
     navRef.current = null
   }, [book.cloudId, book.url, book.name])
@@ -111,12 +116,16 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
 
   const hideChrome = useCallback(() => {
     setChromeVisible(false)
-    setDockExpanded(false)
+  }, [])
+
+  const openSettings = useCallback(() => {
+    setChromeVisible(true)
   }, [])
 
   useChromeSwipe(bodyRef, {
     onShow: showChrome,
     onHide: hideChrome,
+    visible: chromeVisible,
     enabled: isMobile && !studyOpen,
   })
 
@@ -346,6 +355,11 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
     })
   }, [])
 
+  const handleEpubTypography = useCallback((next: EpubTypography) => {
+    setEpubTypography(next)
+    saveEpubTypography(next)
+  }, [])
+
   const setReadingMode = useCallback(
     (on: boolean) => {
       setFocusMode(on)
@@ -362,7 +376,7 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
   const openStudy = useCallback(() => {
     clearAllLookups()
     setStudyOpen(true)
-    setDockExpanded(false)
+    setChromeVisible(false)
   }, [clearAllLookups])
 
   const handleNavState = useCallback((state: ReaderNavSnapshot) => {
@@ -393,9 +407,15 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
   )
 
   const handleEpubProgress = useCallback(
-    (progress: { page?: number; cfi?: string; percent?: number }) => {
+    (progress: {
+      page?: number
+      totalPages?: number
+      cfi?: string
+      percent?: number
+    }) => {
       const page = progress.page ?? lastProgressRef.current.page
       queueProgressSave(page, progress.cfi, {
+        totalPages: progress.totalPages,
         progressPercent: progress.percent,
       })
     },
@@ -462,47 +482,16 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
 
   return (
     <div
-      className={`reader-shell${focusMode ? ' reader-shell--focus' : ''}${dockExpanded ? ' reader-shell--dock-open' : ''}${!chromeVisible ? ' reader-shell--chrome-hidden' : ''}`}
+      className={`reader-shell${focusMode ? ' reader-shell--focus' : ''}${chromeVisible ? ' reader-shell--dock-open' : ''}${!chromeVisible ? ' reader-shell--chrome-hidden' : ''}`}
     >
       <header className="reader-top">
-        <button type="button" className="reader-top__back" onClick={onClose}>
-          <svg
-            className="reader-top__icon"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
+        <div className="reader-top__tools" role="toolbar" aria-label="Menu">
+          <button
+            type="button"
+            className="reader-top__tool"
+            onClick={onClose}
+            title="Biblioteka"
           >
-            <path
-              fill="currentColor"
-              d="M6 4.5A2.5 2.5 0 0 1 8.5 2H20v18H8.5A2.5 2.5 0 0 0 6 22.5V4.5Zm2 0V20h10V4H8.5c-.17 0-.33.02-.5.05V4.5Z"
-            />
-            <path
-              fill="currentColor"
-              d="M4 5.5A1.5 1.5 0 0 1 5.5 4H6v16h-.5A1.5 1.5 0 0 1 4 18.5v-13Z"
-              opacity=".55"
-            />
-          </svg>
-          Biblioteka
-        </button>
-        <button
-          type="button"
-          className="reader-top__theme"
-          onClick={onToggleTheme}
-          title={theme === 'dark' ? 'Tryb jasny' : 'Tryb ciemny'}
-          aria-label={theme === 'dark' ? 'Włącz tryb jasny' : 'Włącz tryb ciemny'}
-        >
-          {theme === 'dark' ? (
-            <svg
-              className="reader-top__icon"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-            >
-              <circle cx="12" cy="12" r="4" fill="currentColor" />
-              <path
-                fill="currentColor"
-                d="M12 2.5a1 1 0 0 1 1 1V5a1 1 0 1 1-2 0V3.5a1 1 0 0 1 1-1Zm0 14a1 1 0 0 1 1 1v1.5a1 1 0 1 1-2 0V17.5a1 1 0 0 1 1-1ZM3.5 11a1 1 0 0 0 0 2H5a1 1 0 1 0 0-2H3.5Zm14 0a1 1 0 1 0 0 2H19a1 1 0 1 0 0-2h-1.5ZM5.99 5.99a1 1 0 0 1 1.41 0l1.06 1.06a1 1 0 0 1-1.41 1.41L5.99 7.4a1 1 0 0 1 0-1.41Zm9.55 9.55a1 1 0 0 1 1.41 0l1.06 1.06a1 1 0 1 1-1.41 1.41l-1.06-1.06a1 1 0 0 1 0-1.41ZM18.01 5.99a1 1 0 0 1 0 1.41l-1.06 1.06a1 1 0 1 1-1.41-1.41l1.06-1.06a1 1 0 0 1 1.41 0ZM8.46 15.54a1 1 0 0 1 0 1.41L7.4 18.01a1 1 0 1 1-1.41-1.41l1.06-1.06a1 1 0 0 1 1.41 0Z"
-              />
-            </svg>
-          ) : (
             <svg
               className="reader-top__icon"
               viewBox="0 0 24 24"
@@ -510,12 +499,82 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
             >
               <path
                 fill="currentColor"
-                d="M14.3 2.1a1 1 0 0 1 1.2 1.25 8 8 0 1 0 5.15 5.15 1 1 0 0 1 1.25 1.2A10 10 0 1 1 14.3 2.1Z"
+                d="M6 4.5A2.5 2.5 0 0 1 8.5 2H20v18H8.5A2.5 2.5 0 0 0 6 22.5V4.5Zm2 0V20h10V4H8.5c-.17 0-.33.02-.5.05V4.5Z"
+              />
+              <path
+                fill="currentColor"
+                d="M4 5.5A1.5 1.5 0 0 1 5.5 4H6v16h-.5A1.5 1.5 0 0 1 4 18.5v-13Z"
+                opacity=".55"
               />
             </svg>
-          )}
-          {theme === 'dark' ? 'Jasny' : 'Ciemny'}
-        </button>
+            <span className="reader-top__tool-label">Biblioteka</span>
+          </button>
+
+          <button
+            type="button"
+            className="reader-top__tool"
+            onClick={openSettings}
+            title="Ustawienia"
+          >
+            <svg
+              className="reader-top__icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+                stroke="currentColor"
+                strokeWidth="2"
+              />
+              <path
+                d="M19.4 13a7.8 7.8 0 0 0 .1-2l2-1.2-2-3.4-2.3.6a7.6 7.6 0 0 0-1.7-1L15 4h-4l-.5 2a7.6 7.6 0 0 0-1.7 1l-2.3-.6-2 3.4 2 1.2a7.8 7.8 0 0 0 0 2l-2 1.2 2 3.4 2.3-.6a7.6 7.6 0 0 0 1.7 1l.5 2h4l.5-2a7.6 7.6 0 0 0 1.7-1l2.3.6 2-3.4-2-1.2Z"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <span className="reader-top__tool-label">Ustawienia</span>
+          </button>
+
+          <button
+            type="button"
+            className="reader-top__tool"
+            onClick={onToggleTheme}
+            title={theme === 'dark' ? 'Tryb jasny' : 'Tryb ciemny'}
+            aria-label={
+              theme === 'dark' ? 'Włącz tryb jasny' : 'Włącz tryb ciemny'
+            }
+          >
+            {theme === 'dark' ? (
+              <svg
+                className="reader-top__icon"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="4" fill="currentColor" />
+                <path
+                  fill="currentColor"
+                  d="M12 2.5a1 1 0 0 1 1 1V5a1 1 0 1 1-2 0V3.5a1 1 0 0 1 1-1Zm0 14a1 1 0 0 1 1 1v1.5a1 1 0 1 1-2 0V17.5a1 1 0 0 1 1-1ZM3.5 11a1 1 0 0 0 0 2H5a1 1 0 1 0 0-2H3.5Zm14 0a1 1 0 1 0 0 2H19a1 1 0 1 0 0-2h-1.5ZM5.99 5.99a1 1 0 0 1 1.41 0l1.06 1.06a1 1 0 0 1-1.41 1.41L5.99 7.4a1 1 0 0 1 0-1.41Zm9.55 9.55a1 1 0 0 1 1.41 0l1.06 1.06a1 1 0 1 1-1.41 1.41l-1.06-1.06a1 1 0 0 1 0-1.41ZM18.01 5.99a1 1 0 0 1 0 1.41l-1.06 1.06a1 1 0 1 1-1.41-1.41l1.06-1.06a1 1 0 0 1 1.41 0ZM8.46 15.54a1 1 0 0 1 0 1.41L7.4 18.01a1 1 0 1 1-1.41-1.41l1.06-1.06a1 1 0 0 1 1.41 0Z"
+                />
+              </svg>
+            ) : (
+              <svg
+                className="reader-top__icon"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  fill="currentColor"
+                  d="M14.3 2.1a1 1 0 0 1 1.2 1.25 8 8 0 1 0 5.15 5.15 1 1 0 0 1 1.25 1.2A10 10 0 1 1 14.3 2.1Z"
+                />
+              </svg>
+            )}
+            <span className="reader-top__tool-label">
+              {theme === 'dark' ? 'Jasny' : 'Ciemny'}
+            </span>
+          </button>
+        </div>
       </header>
 
       <aside
@@ -643,6 +702,13 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
             />
           </div>
 
+          {book.format === 'epub' && (
+            <EpubTypographyControls
+              value={epubTypography}
+              onChange={handleEpubTypography}
+            />
+          )}
+
           <div className="reader-bar__actions">
             <button
               type="button"
@@ -752,8 +818,10 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
                 url={book.url}
                 theme={theme}
                 focusMode={focusMode}
+                typography={epubTypography}
                 swipeEnabled={swipeEnabled && !studyOpen}
                 chromeSwipeEnabled={isMobile && !studyOpen}
+                chromeVisible={chromeVisible}
                 onChromeShow={showChrome}
                 onChromeHide={hideChrome}
                 initialCfi={book.initialCfi}
@@ -763,6 +831,7 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
                 onNavLabel={setNavLabel}
                 onProgress={cloudSync ? handleEpubProgress : undefined}
                 onNavState={handleNavState}
+                onNavigate={clearAllLookups}
               />
             )}
             {book.format === 'pdf' && (
@@ -778,6 +847,7 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
                 onNavLabel={setNavLabel}
                 onPageChange={cloudSync ? handlePdfPageChange : undefined}
                 onNavState={handleNavState}
+                onNavigate={clearAllLookups}
               />
             )}
             {book.format === 'txt' && (
@@ -791,6 +861,7 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
                 onNavLabel={setNavLabel}
                 onProgress={cloudSync ? handleTxtProgress : undefined}
                 onNavState={handleNavState}
+                onNavigate={clearAllLookups}
               />
             )}
           </div>
@@ -799,8 +870,8 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
 
       {!studyOpen && (
         <ReaderDock
-          expanded={dockExpanded}
-          onToggle={() => setDockExpanded((v) => !v)}
+          expanded={chromeVisible}
+          onToggle={hideChrome}
           nav={navState}
           onPrev={handleDockPrev}
           onNext={handleDockNext}
@@ -809,6 +880,12 @@ export function Reader({ book, onClose, theme, onToggleTheme, userId }: Props) {
           onToggleAutoSpeak={toggleAutoSpeak}
           studyCount={studyDeck.length}
           onOpenStudy={openStudy}
+          epubTypography={
+            book.format === 'epub' ? epubTypography : undefined
+          }
+          onEpubTypographyChange={
+            book.format === 'epub' ? handleEpubTypography : undefined
+          }
         />
       )}
 

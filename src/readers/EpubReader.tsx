@@ -9,30 +9,43 @@ import {
 import ePub from 'epubjs'
 import type { Book, Contents, Rendition } from 'epubjs'
 import {
-  lookupInDocument,
+  selectionLookup,
   highlightLookup,
   clearLookupHighlight,
   sentenceAtPoint,
   getHighlightAnchorRect,
   lookupAtPoint,
   lookupFromOffsets,
+  invalidateTextIndex,
 } from '../lib/selection'
 import { usePageSwipe } from '../hooks/usePageSwipe'
 import { useChromeSwipe } from '../hooks/useChromeSwipe'
-import type { LookupPayload } from '../lib/selection'
+import { createSwipeGesture } from '../lib/swipeGesture'
 import type { SentenceLookupPayload, LookupAnchor } from './PdfReader'
 import {
   SelectionHandles,
   type GripRange,
 } from '../components/SelectionHandles'
 import type { ReaderNavHandle, ReaderNavSnapshot } from '../types'
+import { viewportRectFromDoc } from '../lib/popupAnchor'
+import {
+  EPUB_TYPOGRAPHY_DEFAULTS,
+  type EpubTypography,
+} from '../lib/epubTypography'
+import {
+  ensureEpubLocations,
+  epubProgressFromCfi,
+} from '../lib/epubLocations'
 
 type Props = {
   url: string
   theme?: 'light' | 'dark'
   focusMode?: boolean
+  typography?: EpubTypography
   swipeEnabled?: boolean
   chromeSwipeEnabled?: boolean
+  /** When true, vertical swipe hides chrome; when false, shows it. */
+  chromeVisible?: boolean
   onChromeShow?: () => void
   onChromeHide?: () => void
   initialCfi?: string
@@ -42,73 +55,114 @@ type Props = {
   onNavLabel: (label: string) => void
   onProgress?: (progress: {
     page?: number
+    totalPages?: number
     cfi?: string
     percent?: number
   }) => void
   onNavState?: (state: ReaderNavSnapshot) => void
+  /** Fired when the user changes page (arrows, swipe, seek). */
+  onNavigate?: () => void
 }
 
 const EPUB_HIGHLIGHT_CSS = `
+html, body {
+  touch-action: manipulation !important;
+  -webkit-user-select: text;
+  user-select: text;
+}
 mark.lookup-highlight {
-  background: rgba(13, 110, 110, 0.4) !important;
+  background: rgba(13, 110, 110, 0.45) !important;
   color: inherit !important;
   border-radius: 2px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
+  padding: 0.05em 0;
 }
 mark.lookup-highlight--sentence {
-  background: rgba(13, 110, 110, 0.28) !important;
-  box-shadow: inset 0 -2px 0 rgba(13, 110, 110, 0.55);
+  background: rgba(13, 110, 110, 0.32) !important;
+  box-shadow: inset 0 -2px 0 rgba(13, 110, 110, 0.6);
 }
 `
 
 function applyEpubTheme(
   rendition: Rendition,
   theme: 'light' | 'dark',
-  focusMode = false,
+  typography: EpubTypography = EPUB_TYPOGRAPHY_DEFAULTS,
 ) {
   const dark = theme === 'dark'
+  const baseEm = 1.15
+  const fontEm = Math.round(baseEm * typography.fontScale * 100) / 100
+  const padY = typography.marginY
+  const padX = typography.marginX
   rendition.themes.override('color', dark ? '#e4eaf2' : '#1a2332')
   rendition.themes.override('background', dark ? '#1a222d' : '#ffffff')
   rendition.themes.default({
     body: {
       'font-family': '"Literata", Georgia, serif !important',
-      'font-size': focusMode ? '1.35em !important' : '1.15em !important',
+      'font-size': `${fontEm}em !important`,
       'line-height': '1.7 !important',
       color: dark ? '#e4eaf2 !important' : '#1a2332 !important',
       'background-color': dark ? '#1a222d !important' : '#ffffff !important',
-      padding: '0.5em 1.25em !important',
+      padding: `${padY}em ${padX}em !important`,
     },
     a: { color: dark ? '#5ec8c8 !important' : '#0d6e6e !important' },
   })
 }
 
-function iframeOffset(doc: Document): { top: number; left: number } {
-  const win = doc.defaultView
-  const frame = win?.frameElement as HTMLElement | null
-  if (!frame) return { top: 0, left: 0 }
-  const r = frame.getBoundingClientRect()
-  return { top: r.top, left: r.left }
+function selectionRect(doc: Document): DOMRect | null {
+  const sel = doc.getSelection()
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null
+  const r = sel.getRangeAt(0).getBoundingClientRect()
+  if (r.width === 0 && r.height === 0) return null
+  return r
 }
 
-function emitLookup(
-  onLookup: (term: string, context?: string, anchor?: LookupAnchor) => void,
-  doc: Document,
-  payload: LookupPayload | null,
+function anchorFromBody(body: HTMLElement): LookupAnchor | undefined {
+  const doc = body.ownerDocument
+  const rect = getHighlightAnchorRect(body) ?? selectionRect(doc)
+  return rect ? viewportRectFromDoc(doc, rect) : undefined
+}
+
+/** Same lookup UX as PdfReader.runWordLookup, scoped to EPUB iframe body. */
+function runEpubWordLookup(
+  body: HTMLElement,
+  clientX: number,
+  clientY: number,
+  opts: {
+    onLookup: (term: string, context?: string, anchor?: LookupAnchor) => void
+    onSentenceLookup?: (payload: SentenceLookupPayload) => void
+    gripsActive: boolean
+    clearGrips: () => void
+  },
 ) {
-  if (!payload?.term) return
-  highlightLookup(doc, payload)
-  const rect = getHighlightAnchorRect(doc)
-  const off = iframeOffset(doc)
-  const anchor = rect
-    ? {
-        top: rect.top + off.top,
-        left: rect.left + off.left,
-        width: rect.width,
-        height: rect.height,
-      }
-    : undefined
-  onLookup(payload.term, payload.context, anchor)
+  if (opts.gripsActive) {
+    opts.clearGrips()
+    return
+  }
+
+  const selected = selectionLookup(body)
+  if (selected) {
+    const multi = /\s/.test(selected.term)
+    highlightLookup(
+      body,
+      selected,
+      multi
+        ? 'lookup-highlight lookup-highlight--sentence'
+        : 'lookup-highlight',
+    )
+    const anchor = anchorFromBody(body)
+    if (multi && opts.onSentenceLookup && anchor) {
+      opts.onSentenceLookup({ sentence: selected.term, anchor })
+      return
+    }
+    opts.onLookup(selected.term, selected.context, anchor)
+    return
+  }
+
+  const hit = lookupAtPoint(body, clientX, clientY)
+  if (!hit) return
+  highlightLookup(body, hit)
+  opts.onLookup(hit.term, hit.context, anchorFromBody(body))
 }
 
 export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader(
@@ -116,8 +170,10 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
     url,
     theme = 'light',
     focusMode = false,
+    typography = EPUB_TYPOGRAPHY_DEFAULTS,
     swipeEnabled = true,
     chromeSwipeEnabled = false,
+    chromeVisible = true,
     onChromeShow,
     onChromeHide,
     initialCfi,
@@ -127,6 +183,7 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
     onNavLabel,
     onProgress,
     onNavState,
+    onNavigate,
   },
   ref,
 ) {
@@ -141,15 +198,27 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
   onSentenceLookupRef.current = onSentenceLookup
   const themeRef = useRef(theme)
   themeRef.current = theme
+  const typographyRef = useRef(typography)
+  typographyRef.current = typography
 
   const onProgressRef = useRef(onProgress)
   onProgressRef.current = onProgress
   const onNavStateRef = useRef(onNavState)
   onNavStateRef.current = onNavState
+  const onNavigateRef = useRef(onNavigate)
+  onNavigateRef.current = onNavigate
   const onChromeShowRef = useRef(onChromeShow)
   onChromeShowRef.current = onChromeShow
   const onChromeHideRef = useRef(onChromeHide)
   onChromeHideRef.current = onChromeHide
+  const goPrevRef = useRef<() => void>(() => {})
+  const goNextRef = useRef<() => void>(() => {})
+  const swipeEnabledRef = useRef(swipeEnabled)
+  swipeEnabledRef.current = swipeEnabled
+  const chromeSwipeEnabledRef = useRef(chromeSwipeEnabled)
+  chromeSwipeEnabledRef.current = chromeSwipeEnabled
+  const chromeVisibleRef = useRef(chromeVisible)
+  chromeVisibleRef.current = chromeVisible
   const initialCfiRef = useRef(initialCfi)
   initialCfiRef.current = initialCfi
 
@@ -161,14 +230,20 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
     'idle',
   )
   const gripRootRef = useRef<HTMLElement | null>(null)
-  const slidingRef = useRef(false)
+  const slideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const openGripsRef = useRef<(range: GripRange, body: HTMLElement) => void>(
     () => {},
   )
   openGripsRef.current = (range, body) => {
     gripRootRef.current = body
-    setFrameOffset(iframeOffset(body.ownerDocument))
+    const mapped = viewportRectFromDoc(body.ownerDocument, {
+      top: 0,
+      left: 0,
+      width: 0,
+      height: 0,
+    })
+    setFrameOffset({ top: mapped.top, left: mapped.left })
     body.ownerDocument.getSelection()?.removeAllRanges()
     setGripRange(range)
   }
@@ -181,60 +256,49 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
   const gripActiveRef = useRef(false)
   gripActiveRef.current = gripRange != null
 
+  const playPageSlide = useCallback((dir: 'forward' | 'back') => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (slideTimerRef.current) clearTimeout(slideTimerRef.current)
+    setPageSlide(dir)
+    slideTimerRef.current = window.setTimeout(() => {
+      setPageSlide('idle')
+      slideTimerRef.current = null
+    }, 380)
+  }, [])
+
   const goPrev = useCallback(() => {
     clearGrips()
     const rendition = renditionRef.current
-    if (!rendition || slidingRef.current) return
-    const reduceMotion = window.matchMedia(
-      '(prefers-reduced-motion: reduce)',
-    ).matches
-    if (reduceMotion) {
-      void rendition.prev()
-      return
-    }
-    slidingRef.current = true
-    setPageSlide('back')
-    window.setTimeout(() => {
-      void rendition.prev().finally(() => {
-        window.setTimeout(() => {
-          setPageSlide('idle')
-          slidingRef.current = false
-        }, 220)
-      })
-    }, 160)
-  }, [clearGrips])
+    if (!rendition) return
+    onNavigateRef.current?.()
+    playPageSlide('back')
+    void Promise.resolve(rendition.prev()).catch(() => {})
+  }, [clearGrips, playPageSlide])
 
   const goNext = useCallback(() => {
     clearGrips()
     const rendition = renditionRef.current
-    if (!rendition || slidingRef.current) return
-    const reduceMotion = window.matchMedia(
-      '(prefers-reduced-motion: reduce)',
-    ).matches
-    if (reduceMotion) {
-      void rendition.next()
-      return
-    }
-    slidingRef.current = true
-    setPageSlide('forward')
-    window.setTimeout(() => {
-      void rendition.next().finally(() => {
-        window.setTimeout(() => {
-          setPageSlide('idle')
-          slidingRef.current = false
-        }, 220)
-      })
-    }, 160)
-  }, [clearGrips])
+    if (!rendition) return
+    onNavigateRef.current?.()
+    playPageSlide('forward')
+    void Promise.resolve(rendition.next()).catch(() => {})
+  }, [clearGrips, playPageSlide])
+
+  goPrevRef.current = goPrev
+  goNextRef.current = goNext
 
   const seekPercent = useCallback((percent: number) => {
     const book = bookRef.current
     const rendition = renditionRef.current
     if (!book || !rendition) return
+    if (!book.locations.length()) return
     const clamped = Math.min(100, Math.max(0, percent)) / 100
     try {
       const cfi = book.locations.cfiFromPercentage(clamped)
-      if (cfi) void rendition.display(cfi)
+      if (cfi) {
+        onNavigateRef.current?.()
+        void rendition.display(cfi)
+      }
     } catch {
       /* locations not ready yet */
     }
@@ -255,7 +319,11 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
   useChromeSwipe(swipeRef, {
     onShow: onChromeShow ?? (() => {}),
     onHide: onChromeHide ?? (() => {}),
-    enabled: ready && chromeSwipeEnabled && Boolean(onChromeShow && onChromeHide),
+    visible: chromeVisible,
+    enabled:
+      ready &&
+      chromeSwipeEnabled &&
+      Boolean(onChromeShow && onChromeHide),
   })
 
   useEffect(() => {
@@ -265,24 +333,46 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
     let cancelled = false
     setError(null)
     setReady(false)
+    host.replaceChildren()
 
-    const book: Book = ePub(url)
+    const book: Book = ePub(url, { openAs: 'epub' })
     const rendition = book.renderTo(host, {
       width: '100%',
       height: '100%',
       flow: 'paginated',
+      spread: 'none',
+      manager: 'default',
       allowScriptedContent: true,
     })
     renditionRef.current = rendition
     bookRef.current = book
 
-    applyEpubTheme(rendition, themeRef.current, false)
+    applyEpubTheme(rendition, themeRef.current, typographyRef.current)
+
+    const syncSize = () => {
+      if (cancelled || !host.isConnected) return
+      const w = Math.floor(host.clientWidth)
+      const h = Math.floor(host.clientHeight)
+      if (w < 32 || h < 32) return
+      try {
+        rendition.resize(w, h)
+      } catch {
+        /* ignore mid-destroy */
+      }
+    }
+
+    const ro = new ResizeObserver(() => {
+      window.requestAnimationFrame(syncSize)
+    })
+    ro.observe(host)
 
     const cleanups: Array<() => void> = []
 
     rendition.hooks.content.register((contents: Contents) => {
       contentsRef.current = contents
       const doc = contents.document
+      const body = doc.body
+      if (body) invalidateTextIndex(body)
       if (!doc.head.querySelector('style[data-lookup-hl]')) {
         const style = doc.createElement('style')
         style.setAttribute('data-lookup-hl', '1')
@@ -295,10 +385,11 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
       let start = { x: 0, y: 0 }
       let longFired = false
       let cancelledPress = false
+      let swipeDone = false
       let lastTap: { t: number; x: number; y: number } | null = null
-      const LONG_MS = 480
+      const LONG_MS = 450
       const DOUBLE_MS = 320
-      const MOVE = 14
+      const MOVE = 28
 
       const clearTimer = () => {
         if (timer) {
@@ -314,41 +405,60 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
         }
       }
 
+      const swipeTarget = doc.body ?? doc.documentElement
+      const pageChromeSwipe = createSwipeGesture({
+        axis: 'both',
+        distance: 64,
+        velocity: 0.45,
+        axisRatio: 1.6,
+        onSwipe: (dir) => {
+          if (longFired) return
+          swipeDone = true
+          clearTimer()
+          clearTapTimer()
+          lastTap = null
+          cancelledPress = true
+          if (dir === 'left' || dir === 'right') {
+            if (!swipeEnabledRef.current) return
+            if (dir === 'left') goNextRef.current()
+            else goPrevRef.current()
+            return
+          }
+          if (!chromeSwipeEnabledRef.current) return
+          if (chromeVisibleRef.current) onChromeHideRef.current?.()
+          else onChromeShowRef.current?.()
+        },
+      })
+      const detachSwipe = pageChromeSwipe.attach(swipeTarget)
+
       const runWord = (x: number, y: number) => {
-        if (gripActiveRef.current) {
-          clearGripsRef.current()
-          return
-        }
-        emitLookup(
-          onLookupRef.current,
-          doc,
-          lookupInDocument(doc, x, y),
-        )
+        const el = doc.body
+        if (!el) return
+        runEpubWordLookup(el, x, y, {
+          onLookup: onLookupRef.current,
+          onSentenceLookup: onSentenceLookupRef.current,
+          gripsActive: gripActiveRef.current,
+          clearGrips: clearGripsRef.current,
+        })
       }
 
       const runSentence = (x: number, y: number) => {
-        const body = doc.body
+        const el = doc.body
         const cb = onSentenceLookupRef.current
-        if (!body || !cb) return
+        if (!el || !cb) return
         clearGripsRef.current()
-        const hit = sentenceAtPoint(body, x, y)
+        const hit = sentenceAtPoint(el, x, y)
         if (!hit?.highlight) return
         highlightLookup(
-          doc,
+          el,
           hit,
           'lookup-highlight lookup-highlight--sentence',
         )
-        const rect = getHighlightAnchorRect(doc)
-        if (!rect) return
-        const off = iframeOffset(doc)
+        const anchor = anchorFromBody(el)
+        if (!anchor) return
         cb({
           sentence: hit.term,
-          anchor: {
-            top: rect.top + off.top,
-            left: rect.left + off.left,
-            width: rect.width,
-            height: rect.height,
-          },
+          anchor,
         })
       }
 
@@ -376,11 +486,14 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
 
       const onDown = (e: PointerEvent) => {
         if (e.button !== 0) return
+        // Swipe is touch/pen-only; mouse still gets tap / long-press
         longFired = false
         cancelledPress = false
+        swipeDone = false
         start = { x: e.clientX, y: e.clientY }
         clearTimer()
         timer = setTimeout(() => {
+          if (swipeDone || pageChromeSwipe.movedPastSlop()) return
           longFired = true
           clearTapTimer()
           lastTap = null
@@ -396,9 +509,10 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
       }
 
       const onMove = (e: PointerEvent) => {
-        if (longFired) return
-        if (!timer) return
-        if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > MOVE) {
+        if (longFired || swipeDone) return
+        const dx = e.clientX - start.x
+        const dy = e.clientY - start.y
+        if (Math.hypot(dx, dy) > MOVE || pageChromeSwipe.movedPastSlop()) {
           clearTimer()
           cancelledPress = true
         }
@@ -412,15 +526,9 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
           longFired = false
           return
         }
+        if (swipeDone || cancelledPress) return
         const dx = e.clientX - start.x
         const dy = e.clientY - start.y
-        if (Math.abs(dy) >= 48 && Math.abs(dy) > Math.abs(dx) * 1.25) {
-          if (dy < 0) onChromeShowRef.current?.()
-          else onChromeHideRef.current?.()
-          cancelledPress = true
-          return
-        }
-        if (cancelledPress) return
         if (Math.abs(dx) > MOVE || Math.abs(dy) > MOVE) {
           return
         }
@@ -432,6 +540,7 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
         clearTapTimer()
         cancelledPress = true
         longFired = false
+        swipeDone = true
       }
 
       const onDblClick = (e: MouseEvent) => {
@@ -454,6 +563,7 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
       cleanups.push(() => {
         clearTimer()
         clearTapTimer()
+        detachSwipe()
         doc.removeEventListener('pointerdown', onDown)
         doc.removeEventListener('pointermove', onMove)
         doc.removeEventListener('pointerup', onUp)
@@ -465,109 +575,88 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
 
     const handleSelected = (_cfiRange: string, contents: Contents) => {
       contentsRef.current = contents
-      emitLookup(
-        onLookupRef.current,
-        contents.document,
-        lookupInDocument(contents.document),
-      )
+      const el = contents.document.body
+      if (!el) return
+      // Drag-select in EPUB → same path as PDF selectionLookup
+      runEpubWordLookup(el, 0, 0, {
+        onLookup: onLookupRef.current,
+        onSentenceLookup: onSentenceLookupRef.current,
+        gripsActive: false,
+        clearGrips: clearGripsRef.current,
+      })
     }
 
     rendition.on('selected', handleSelected)
 
-    rendition.on('relocated', (location: {
+    const publishProgress = (location: {
       atStart?: boolean
       atEnd?: boolean
-      start?: {
-        cfi?: string
-        displayed?: { page?: number; total?: number }
-        percentage?: number
-      }
-      percentage?: number
+      start?: { cfi?: string }
     }) => {
       const cfi = location?.start?.cfi
-      const pageNum = location?.start?.displayed?.page
-      const totalPages = location?.start?.displayed?.total
-      let percent: number | undefined
-      if (cfi && book.locations?.length?.()) {
-        try {
-          const p = book.locations.percentageFromCfi(cfi)
-          if (typeof p === 'number' && Number.isFinite(p)) {
-            percent = Math.min(100, Math.max(0, Math.round(p * 100)))
-          }
-        } catch {
-          /* ignore */
-        }
-      }
-      if (percent == null) {
-        const rawPct =
-          location?.start?.percentage ?? location?.percentage ?? undefined
-        if (typeof rawPct === 'number' && Number.isFinite(rawPct)) {
-          percent = Math.min(100, Math.max(0, Math.round(rawPct * 100)))
-        }
-      }
-      const page = pageNum && pageNum > 0 ? pageNum : 1
-      const pct = percent ?? 0
+      const progress = epubProgressFromCfi(book, cfi)
+      const page = progress?.page ?? 1
+      const totalPages = progress?.totalPages ?? null
+      const pct = progress?.percent ?? 0
       onProgressRef.current?.({
         cfi,
         page,
+        totalPages: totalPages ?? undefined,
         percent: pct,
       })
       onNavStateRef.current?.({
         page,
-        totalPages: totalPages && totalPages > 0 ? totalPages : null,
+        totalPages,
         percent: pct,
         canPrev: !location.atStart,
         canNext: !location.atEnd,
       })
+    }
+
+    rendition.on('relocated', (location: {
+      atStart?: boolean
+      atEnd?: boolean
+      start?: { cfi?: string }
+    }) => {
+      clearGripsRef.current()
+      const liveBody = contentsRef.current?.document?.body
+      if (liveBody) {
+        invalidateTextIndex(liveBody)
+        clearLookupHighlight(liveBody)
+      }
+      publishProgress(location)
     })
 
     book.ready
       .then(() => {
         if (cancelled) return
+        syncSize()
         const cfi = initialCfiRef.current
         if (cfi) return rendition.display(cfi)
         return rendition.display()
       })
-      .then(() => {
+      .then(async () => {
         if (cancelled) return
+        syncSize()
         setReady(true)
         const meta = book.packaging?.metadata as
           | { title?: string }
           | undefined
         onNavLabel(meta?.title || 'EPUB')
-        // Background location index for slider seek + accurate %
-        void book.locations
-          .generate(1600)
-          .then(() => {
-            if (cancelled) return
-            const loc = rendition.currentLocation() as
-              | { start?: { cfi?: string } }
-              | undefined
-            const cfi = loc?.start?.cfi
-            if (!cfi) return
-            try {
-              const p = book.locations.percentageFromCfi(cfi)
-              if (typeof p === 'number' && Number.isFinite(p)) {
-                const pct = Math.min(100, Math.max(0, Math.round(p * 100)))
-                onProgressRef.current?.({ cfi, percent: pct })
-                onNavStateRef.current?.({
-                  page: 1,
-                  totalPages: null,
-                  percent: pct,
-                  canPrev: true,
-                  canNext: true,
-                })
-              }
-            } catch {
-              /* ignore */
-            }
-          })
-          .catch(() => {
-            /* optional */
-          })
+        try {
+          await ensureEpubLocations(book)
+        } catch {
+          return
+        }
+        if (cancelled) return
+        const loc = rendition.currentLocation() as
+          | { atStart?: boolean; atEnd?: boolean; start?: { cfi?: string } }
+          | undefined
+        if (loc) publishProgress(loc)
       })
       .catch((err: unknown) => {
         if (cancelled) return
+        console.error('EPUB load failed:', err)
         setError(
           err instanceof Error
             ? err.message
@@ -576,17 +665,33 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
       })
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight') void rendition.next()
-      if (e.key === 'ArrowLeft') void rendition.prev()
+      if (e.key === 'ArrowRight') {
+        onNavigateRef.current?.()
+        void rendition.next()
+      }
+      if (e.key === 'ArrowLeft') {
+        onNavigateRef.current?.()
+        void rendition.prev()
+      }
     }
     window.addEventListener('keydown', onKey)
 
     return () => {
       cancelled = true
       window.removeEventListener('keydown', onKey)
+      if (slideTimerRef.current) {
+        clearTimeout(slideTimerRef.current)
+        slideTimerRef.current = null
+      }
+      ro.disconnect()
       cleanups.forEach((fn) => fn())
-      rendition.destroy()
+      try {
+        rendition.destroy()
+      } catch {
+        /* ignore */
+      }
       void book.destroy()
+      host.replaceChildren()
       renditionRef.current = null
       bookRef.current = null
       contentsRef.current = null
@@ -595,13 +700,24 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
 
   useEffect(() => {
     const rendition = renditionRef.current
+    const host = hostRef.current
     if (!rendition || !ready) return
-    applyEpubTheme(rendition, theme, focusMode)
-  }, [theme, ready, focusMode])
+    applyEpubTheme(rendition, theme, typography)
+    // Re-paginate after font/margin change
+    const w = host ? Math.floor(host.clientWidth) : 0
+    const h = host ? Math.floor(host.clientHeight) : 0
+    if (w >= 32 && h >= 32) {
+      try {
+        rendition.resize(w, h)
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [theme, ready, typography])
 
   useEffect(() => {
     if (!keepHighlight) {
-      clearLookupHighlight(contentsRef.current?.document ?? null)
+      clearLookupHighlight(contentsRef.current?.document?.body ?? null)
     }
   }, [keepHighlight])
 
@@ -653,26 +769,20 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
             return
           }
           highlightLookup(
-            body.ownerDocument,
+            body,
             payload,
             'lookup-highlight lookup-highlight--sentence',
           )
-          const rect = getHighlightAnchorRect(body.ownerDocument)
-          const off = iframeOffset(body.ownerDocument)
+          const anchor = anchorFromBody(body)
           setGripRange(null)
-          if (onSentenceLookup && rect) {
+          if (onSentenceLookup && anchor) {
             onSentenceLookup({
               sentence: payload.term,
-              anchor: {
-                top: rect.top + off.top,
-                left: rect.left + off.left,
-                width: rect.width,
-                height: rect.height,
-              },
+              anchor,
             })
             return
           }
-          emitLookup(onLookup, body.ownerDocument, payload)
+          onLookup(payload.term, payload.context, anchor)
         }}
         onDismiss={clearGrips}
       />

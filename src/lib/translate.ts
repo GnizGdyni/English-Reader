@@ -6,7 +6,7 @@ import {
   type LocalDictEntry,
 } from './localDict'
 
-const CACHE_KEY = 'english-reader:translate-v13'
+const CACHE_KEY = 'english-reader:translate-v15'
 const CACHE_MAX = 400
 
 const cache = new Map<string, TranslationResult>()
@@ -135,65 +135,123 @@ function isAcceptableGloss(term: string, gloss: string): boolean {
   return true
 }
 
-function guessPos(term: string, context?: string): string | null {
-  if (!context) return null
-  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+type PosGuess = {
+  pos: 'noun' | 'verb' | 'adjective' | 'adverb'
+  /** high = syntactic pattern; low = morphology-only */
+  confidence: 'high' | 'low'
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function morphologyPos(term: string): PosGuess | null {
+  const t = term.toLowerCase()
+  if (t.length < 3) return null
+  if (t.endsWith('ly') && t.length >= 5) {
+    return { pos: 'adverb', confidence: 'low' }
+  }
+  if (
+    /(tion|sion|ness|ment|ity|hood|ship|ance|ence)$/i.test(t) &&
+    t.length >= 6
+  ) {
+    return { pos: 'noun', confidence: 'low' }
+  }
+  if (t.endsWith('ing') && t.length >= 5) {
+    return { pos: 'verb', confidence: 'low' }
+  }
+  if (t.endsWith('ed') && t.length >= 4) {
+    return { pos: 'verb', confidence: 'low' }
+  }
+  if (/(ous|ful|less|ive|ical|able|ible)$/i.test(t) && t.length >= 5) {
+    return { pos: 'adjective', confidence: 'low' }
+  }
+  return null
+}
+
+function guessPos(term: string, context?: string): PosGuess | null {
+  if (!context) return morphologyPos(term)
+
+  const escaped = escapeRegExp(term)
   const ctx = context
 
+  // Determiners / possessives → noun (high)
   if (
     new RegExp(
-      `\\b(the|a|an|my|your|his|her|its|our|their|this|that|these|those|some|any|every|each|no|another|such)\\s+${escaped}\\b`,
+      `\\b(the|a|an|my|your|his|her|its|our|their|this|that|these|those|some|any|every|each|no|another|such|few|many|several|both)\\s+${escaped}\\b`,
+      'i',
+    ).test(ctx) ||
+    new RegExp(`\\b(of|for|with|without|about|from)\\s+the\\s+${escaped}\\b`, 'i').test(
+      ctx,
+    ) ||
+    new RegExp(`\\b${escaped}\\s+of\\b`, 'i').test(ctx)
+  ) {
+    return { pos: 'noun', confidence: 'high' }
+  }
+
+  // Infinitive / auxiliaries / negation → verb (high)
+  if (
+    new RegExp(
+      `\\b(to|will|would|can|could|should|must|may|might|shall|let's|do|does|did|don't|doesn't|didn't|won't|can't|cannot|always|never|often|sometimes|just|still|also|please)\\s+${escaped}\\b`,
+      'i',
+    ).test(ctx) ||
+    new RegExp(
+      `\\b(have|has|had|having)\\s+${escaped}\\b`,
       'i',
     ).test(ctx)
   ) {
-    return 'noun'
+    return { pos: 'verb', confidence: 'high' }
   }
 
+  // Copula / sense verbs → adjective (high)
   if (
     new RegExp(
-      `\\b(to|will|would|can|could|should|must|may|might|shall|let's|don't|doesn't|didn't|won't|can't|always|never|often|sometimes|just|still|also)\\s+${escaped}\\b`,
+      `\\b(is|are|was|were|be|been|being|seem|seems|seemed|look|looks|looked|feel|feels|felt|become|became|grow|grows|grew|turn|turns|turned|stay|stays|remain|remains|sound|sounds|taste|tastes|smell|smells)\\s+${escaped}\\b`,
       'i',
     ).test(ctx)
   ) {
-    return 'verb'
+    return { pos: 'adjective', confidence: 'high' }
   }
 
-  if (
-    new RegExp(
-      `\\b(is|are|was|were|be|been|being|seem|seems|look|looks|feel|feels|become|became|grow|grows|turn|turns|stay|stays|remain|remains|sound|sounds|taste|tastes|smell|smells)\\s+${escaped}\\b`,
-      'i',
-    ).test(ctx)
-  ) {
-    return 'adjective'
-  }
-
+  // Modifies following NP → adverb (high)
   if (
     new RegExp(
       `\\b${escaped}\\s+(the|a|an|my|your|his|her|their|its|this|that|each|every|all|both|these|those)\\b`,
       'i',
     ).test(ctx)
   ) {
-    return 'adverb'
+    return { pos: 'adverb', confidence: 'high' }
   }
 
+  // Motion / perception verb + particle-like word → adverb (high)
   if (
     new RegExp(
-      `\\b(come|go|run|walk|move|drive|fly|sail|travel|head|pass|rush|speed|look|gaze|stare)\\s+${escaped}\\b`,
+      `\\b(come|came|go|went|run|ran|walk|walked|move|moved|drive|drove|fly|flew|sail|sailed|travel|traveled|travelled|head|headed|pass|passed|rush|rushed|speed|look|looked|gaze|gazed|stare|stared)\\s+${escaped}\\b`,
       'i',
     ).test(ctx)
   ) {
-    return 'adverb'
+    return { pos: 'adverb', confidence: 'high' }
   }
 
-  return null
+  return morphologyPos(term)
 }
 
+/**
+ * MT query is always the headword (optionally POS-prefixed).
+ * Full sentence/phrase stays for POS + dict ranking only — sending
+ * "think about something" made glosses like "myśleć o" for "something".
+ */
 function senseHintQuery(term: string, context?: string): string {
   if (/\s/.test(term)) return term
-  const guessed = guessPos(term, context)
-  if (guessed === 'verb') return `to ${term}`
-  if (guessed === 'noun') return `the ${term}`
-  if (guessed === 'adjective') return `very ${term}`
+  return posHintQuery(term, guessPos(term, context))
+}
+
+/** POS prefixes only when confidence is high — never invent weak hints. */
+function posHintQuery(term: string, pos: PosGuess | null): string {
+  if (!pos || pos.confidence !== 'high') return term
+  if (pos.pos === 'verb') return `to ${term}`
+  if (pos.pos === 'noun') return `the ${term}`
+  if (pos.pos === 'adjective') return `very ${term}`
   return term
 }
 
@@ -337,7 +395,7 @@ export async function translate(
   const hasSentence =
     !!sentence && sentence.toLowerCase() !== term.toLowerCase()
 
-  const cacheKey = `v13::${term.toLowerCase()}::${(sentence ?? '').toLowerCase()}`
+  const cacheKey = `v15::${term.toLowerCase()}::${(sentence ?? '').toLowerCase()}`
   const cached = cache.get(cacheKey)
   if (cached) return cached
 
@@ -367,6 +425,8 @@ async function translateInternal(
   hasSentence: boolean,
   cacheKey: string,
 ): Promise<TranslationResult> {
+  const posGuess =
+    hasSentence && sentence ? guessPos(term, sentence) : morphologyPos(term)
   const hintQuery = senseHintQuery(term, sentence)
 
   const localDictPromise = lookupLocalDict(term).catch(
@@ -382,8 +442,7 @@ async function translateInternal(
     localDictPromise,
   ])
 
-  const guessedPos = hasSentence && sentence ? guessPos(term, sentence) : null
-  const dict = rankLocalDictByPos(localDictRaw, guessedPos)
+  const dict = rankLocalDictByPos(localDictRaw, posGuess?.pos ?? null)
 
   const translation = pickGloss(term, directPl)
   const headword =

@@ -66,6 +66,8 @@ type Props = {
   onNavLabel: (label: string) => void
   onPageChange?: (page: number, totalPages: number) => void
   onNavState?: (state: ReaderNavSnapshot) => void
+  /** Fired when the user changes page (arrows, swipe, seek). */
+  onNavigate?: () => void
 }
 
 function anchorFromLayer(layer: HTMLElement): LookupAnchor | undefined {
@@ -91,9 +93,12 @@ export const PdfReader = forwardRef<ReaderNavHandle, Props>(function PdfReader(
     onNavLabel,
     onPageChange,
     onNavState,
+    onNavigate,
   },
   ref,
 ) {
+  const onNavigateRef = useRef(onNavigate)
+  onNavigateRef.current = onNavigate
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const textLayerRef = useRef<HTMLDivElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -132,6 +137,8 @@ export const PdfReader = forwardRef<ReaderNavHandle, Props>(function PdfReader(
       if (nextPage === current) return
       if (nextPage < 1) return
       if (pageCount > 0 && nextPage > pageCount) return
+
+      onNavigateRef.current?.()
 
       const reduceMotion = window.matchMedia(
         '(prefers-reduced-motion: reduce)',
@@ -176,6 +183,7 @@ export const PdfReader = forwardRef<ReaderNavHandle, Props>(function PdfReader(
         Math.max(1, Math.round((clamped / 100) * pageCount) || 1),
       )
       // Jump without flip animation (scrubbing)
+      if (next !== pageRef.current) onNavigateRef.current?.()
       turningRef.current = false
       setPageTurn(null)
       setPage(next)

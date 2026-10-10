@@ -32,6 +32,8 @@ type Props = {
   onNavLabel: (label: string) => void
   onProgress?: (percent: number) => void
   onNavState?: (state: ReaderNavSnapshot) => void
+  /** Fired when the user changes “page” (arrows / seek). */
+  onNavigate?: () => void
 }
 
 function anchorFromRoot(root: HTMLElement): LookupAnchor | undefined {
@@ -55,6 +57,7 @@ export const TxtReader = forwardRef<ReaderNavHandle, Props>(function TxtReader(
     onNavLabel,
     onProgress,
     onNavState,
+    onNavigate,
   },
   ref,
 ) {
@@ -64,6 +67,8 @@ export const TxtReader = forwardRef<ReaderNavHandle, Props>(function TxtReader(
   onProgressRef.current = onProgress
   const onNavStateRef = useRef(onNavState)
   onNavStateRef.current = onNavState
+  const onNavigateRef = useRef(onNavigate)
+  onNavigateRef.current = onNavigate
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [ready, setReady] = useState(false)
@@ -88,12 +93,14 @@ export const TxtReader = forwardRef<ReaderNavHandle, Props>(function TxtReader(
   const goPrev = useCallback(() => {
     const root = scrollRef.current
     if (!root) return
+    onNavigateRef.current?.()
     root.scrollBy({ top: -Math.max(120, root.clientHeight * 0.85), behavior: 'smooth' })
   }, [])
 
   const goNext = useCallback(() => {
     const root = scrollRef.current
     if (!root) return
+    onNavigateRef.current?.()
     root.scrollBy({ top: Math.max(120, root.clientHeight * 0.85), behavior: 'smooth' })
   }, [])
 
@@ -102,6 +109,7 @@ export const TxtReader = forwardRef<ReaderNavHandle, Props>(function TxtReader(
     if (!root) return
     const max = root.scrollHeight - root.clientHeight
     if (max <= 0) return
+    onNavigateRef.current?.()
     root.scrollTop = (Math.min(100, Math.max(0, percent)) / 100) * max
     reportScroll()
   }, [reportScroll])

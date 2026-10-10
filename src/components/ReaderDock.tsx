@@ -1,5 +1,7 @@
 import { useEffect, useId, useState, type CSSProperties } from 'react'
 import type { ReaderNavSnapshot } from '../types'
+import type { EpubTypography } from '../lib/epubTypography'
+import { EpubTypographyControls } from './EpubTypographyControls'
 
 type Props = {
   expanded: boolean
@@ -12,6 +14,8 @@ type Props = {
   onToggleAutoSpeak: () => void
   studyCount: number
   onOpenStudy: () => void
+  epubTypography?: EpubTypography
+  onEpubTypographyChange?: (next: EpubTypography) => void
 }
 
 function formatNavLabel(nav: ReaderNavSnapshot): string {
@@ -34,6 +38,8 @@ export function ReaderDock({
   onToggleAutoSpeak,
   studyCount,
   onOpenStudy,
+  epubTypography,
+  onEpubTypographyChange,
 }: Props) {
   const sliderId = useId()
   const [sliderValue, setSliderValue] = useState(nav.percent)
@@ -51,7 +57,7 @@ export function ReaderDock({
         className="reader-dock__handle"
         onClick={onToggle}
         aria-expanded={expanded}
-        aria-label={expanded ? 'Zwiń panel' : 'Rozwiń panel'}
+        aria-label="Ukryj panele"
       >
         <span className="reader-dock__handle-bar" aria-hidden />
       </button>
@@ -86,6 +92,14 @@ export function ReaderDock({
             )}
           </button>
         </div>
+      )}
+
+      {expanded && epubTypography && onEpubTypographyChange && (
+        <EpubTypographyControls
+          value={epubTypography}
+          onChange={onEpubTypographyChange}
+          compact
+        />
       )}
 
       {expanded && (
@@ -130,7 +144,7 @@ export function ReaderDock({
           type="button"
           className="reader-dock__status"
           onClick={onToggle}
-          aria-label={expanded ? 'Zwiń panel' : 'Rozwiń panel'}
+          aria-label="Ukryj panele"
         >
           {formatNavLabel(nav)}
         </button>

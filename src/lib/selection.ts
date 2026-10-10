@@ -799,20 +799,25 @@ export function selectionLookup(
   if (!term) return null
 
   const range = selection.getRangeAt(0)
-  const container =
+
+  // Prefer explicit root (PDF layer / TXT article / EPUB body) so highlight
+  // offsets match highlightLookup's scope. Never index a lone <p> for EPUB.
+  let scope: HTMLElement | null =
     root instanceof HTMLElement
       ? root
-      : (range.commonAncestorContainer.parentElement as HTMLElement | null)
+      : root instanceof Document
+        ? root.body
+        : null
 
-  if (!container) {
-    return { term }
+  if (!scope) {
+    const container =
+      range.commonAncestorContainer.parentElement as HTMLElement | null
+    if (!container) return { term }
+    scope =
+      (container.closest(
+        '.txt-article, .textLayer, .epub-host, body',
+      ) as HTMLElement | null) ?? container
   }
-
-  const scope =
-    (container.closest(
-      '.txt-article, .textLayer, .epub-host',
-    ) as HTMLElement | null) ??
-    (root instanceof HTMLElement ? root : container)
 
   try {
     const { text, indexOf } = buildTextIndex(scope)
@@ -843,17 +848,18 @@ export function selectionLookup(
   return { term, context: term }
 }
 
-/** EPUB iframe: word/selection from Contents document. */
+/** EPUB iframe: word/selection from Contents document (always scoped to body). */
 export function lookupInDocument(
   doc: Document,
   clientX?: number,
   clientY?: number,
 ): LookupPayload | null {
-  const selected = selectionLookup(doc)
+  const body = doc.body
+  if (!body) return null
+
+  const selected = selectionLookup(body)
   if (selected) return selected
 
   if (clientX == null || clientY == null) return null
-  const body = doc.body
-  if (!body) return null
   return lookupAtPoint(body, clientX, clientY)
 }

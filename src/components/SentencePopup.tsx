@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { getReaderSurfaceRect } from '../lib/popupAnchor'
 
 export type SentenceAnchor = {
   top: number
@@ -20,11 +21,6 @@ type Props = {
   onClose: () => void
 }
 
-function getPdfPageRect(): DOMRect | null {
-  const el = document.querySelector('.pdf-page')
-  return el?.getBoundingClientRect() ?? null
-}
-
 export function SentencePopup({ state, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
@@ -36,15 +32,21 @@ export function SentencePopup({ state, onClose }: Props) {
     const gap = 8
     const vh = window.innerHeight
     const vw = window.innerWidth
-    const page = getPdfPageRect()
+    const page = getReaderSurfaceRect()
     const a = state.anchor
 
     const width = page
-      ? Math.max(120, page.width)
+      ? Math.max(120, Math.min(page.width - pad * 2, Math.max(a.width, 280)))
       : Math.min(vw - pad * 2, a.width || vw - pad * 2)
-    const left = page
-      ? page.left
-      : Math.max(pad, Math.min(a.left, vw - width - pad))
+    let left = a.left + a.width / 2 - width / 2
+    if (page) {
+      left = Math.max(
+        page.left + pad,
+        Math.min(left, page.left + page.width - width - pad),
+      )
+    } else {
+      left = Math.max(pad, Math.min(left, vw - width - pad))
+    }
 
     // Measure height with the target width applied.
     el.style.width = `${width}px`

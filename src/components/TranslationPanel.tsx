@@ -11,6 +11,7 @@ import type {
   TranslationState,
 } from '../types'
 import { speakEnglish } from '../lib/speech'
+import { getReaderSurfaceRect } from '../lib/popupAnchor'
 
 type Props = {
   state: TranslationState
@@ -19,20 +20,32 @@ type Props = {
   onAddToStudy?: (result: TranslationResult) => void
 }
 
-function getPdfPageRect(): DOMRect | null {
-  const el = document.querySelector('.pdf-page')
-  return el?.getBoundingClientRect() ?? null
-}
-
-function highlightTerm(text: string, ...needles: string[]): ReactNode {
-  const parts = needles
-    .map((n) => n.trim())
-    .filter(Boolean)
-    .sort((a, b) => b.length - a.length)
+function highlightTerm(
+  text: string,
+  hitClass: string,
+  ...needles: string[]
+): ReactNode {
+  const parts = [
+    ...new Set(
+      needles
+        .map((n) => n.trim())
+        .filter((n) => n.length > 0)
+        .sort((a, b) => b.length - a.length),
+    ),
+  ]
   if (!parts.length) return text
 
   const escaped = parts.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  const re = new RegExp(`\\b(${escaped.join('|')})\\b`, 'gi')
+  let re: RegExp
+  try {
+    // Word-ish boundaries for EN/PL (incl. diacritics)
+    re = new RegExp(
+      `(?<![\\p{L}\\p{N}_])(${escaped.join('|')})(?![\\p{L}\\p{N}_])`,
+      'giu',
+    )
+  } catch {
+    re = new RegExp(`\\b(${escaped.join('|')})\\b`, 'gi')
+  }
   const nodes: ReactNode[] = []
   let last = 0
   let m: RegExpExecArray | null
@@ -40,14 +53,30 @@ function highlightTerm(text: string, ...needles: string[]): ReactNode {
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) nodes.push(text.slice(last, m.index))
     nodes.push(
-      <strong key={`h-${i++}`} className="word-popup__ex-hit">
+      <mark key={`h-${i++}`} className={hitClass}>
         {m[0]}
-      </strong>,
+      </mark>,
     )
     last = m.index + m[0].length
   }
   if (last < text.length) nodes.push(text.slice(last))
   return nodes.length ? nodes : text
+}
+
+/** First gloss token(s) suitable for highlighting inside a PL example. */
+function polishGlossNeedles(translation: string): string[] {
+  const cleaned = translation
+    .split(/[;/|•·]/)[0]
+    ?.trim()
+    .replace(/^\(+|\)+$/g, '')
+    .trim()
+  if (!cleaned) return []
+  const out = [cleaned]
+  // Also try the first 1–2 words for multi-word glosses
+  const words = cleaned.split(/\s+/).filter(Boolean)
+  if (words.length > 1) out.push(words.slice(0, 2).join(' '))
+  if (words[0] && words[0].length >= 3) out.push(words[0])
+  return out
 }
 
 function stateAnchor(state: TranslationState): LookupAnchor | undefined {
@@ -86,7 +115,7 @@ export function TranslationPanel({
     const gap = 10
     const vh = window.innerHeight
     const vw = window.innerWidth
-    const page = getPdfPageRect()
+    const page = getReaderSurfaceRect()
     const a = anchor ?? {
       top: vh * 0.35,
       left: page?.left ?? pad,
@@ -95,12 +124,15 @@ export function TranslationPanel({
     }
 
     const width = Math.min(
-      page ? page.width : vw - pad * 2,
+      page ? page.width - pad * 2 : vw - pad * 2,
       Math.max(260, Math.min(420, a.width > 80 ? a.width + 40 : 360)),
     )
     let left = a.left + a.width / 2 - width / 2
     if (page) {
-      left = Math.max(page.left, Math.min(left, page.left + page.width - width))
+      left = Math.max(
+        page.left + pad,
+        Math.min(left, page.left + page.width - width - pad),
+      )
     } else {
       left = Math.max(pad, Math.min(left, vw - width - pad))
     }
@@ -246,12 +278,19 @@ export function TranslationPanel({
 
           {state.result.example && (
             <div className="word-popup__example">
+              <p className="word-popup__example-caption">Przykład</p>
               <p className="word-popup__example-en">
-                {highlightTerm(
-                  state.result.example.en,
-                  state.result.term,
-                  state.result.headword ?? '',
-                )}
+                <span className="word-popup__example-lang" aria-hidden="true">
+                  EN
+                </span>
+                <span className="word-popup__example-text">
+                  {highlightTerm(
+                    state.result.example.en,
+                    'word-popup__ex-hit word-popup__ex-hit--en',
+                    state.result.term,
+                    state.result.headword ?? '',
+                  )}
+                </span>
                 <button
                   type="button"
                   className="word-popup__example-speak"
@@ -264,10 +303,18 @@ export function TranslationPanel({
               </p>
               {state.result.example.pl ? (
                 <p className="word-popup__example-pl">
-                  {state.result.example.pl}
+                  <span className="word-popup__example-lang" aria-hidden="true">
+                    PL
+                  </span>
+                  <span className="word-popup__example-text">
+                    {highlightTerm(
+                      state.result.example.pl,
+                      'word-popup__ex-hit word-popup__ex-hit--pl',
+                      ...polishGlossNeedles(state.result.translation),
+                    )}
+                  </span>
                 </p>
               ) : null}
-              <p className="word-popup__example-caption">Przykład użycia</p>
             </div>
           )}
         </div>
