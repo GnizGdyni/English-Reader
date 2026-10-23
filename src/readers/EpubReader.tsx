@@ -230,7 +230,7 @@ export const EpubReader = forwardRef<ReaderNavHandle, Props>(function EpubReader
     'idle',
   )
   const gripRootRef = useRef<HTMLElement | null>(null)
-  const slideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const slideTimerRef = useRef<number | null>(null)
 
   const openGripsRef = useRef<(range: GripRange, body: HTMLElement) => void>(
     () => {},
